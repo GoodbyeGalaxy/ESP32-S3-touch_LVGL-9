@@ -14,7 +14,7 @@ void ui_init()
 {
     const lvgl_port_cfg_t port_cfg = {
         .task_priority     = 4,
-        .task_stack        = 8192,
+        .task_stack        = 16384,
         .task_affinity     = -1,
         .task_max_sleep_ms = 500,
         .timer_period_ms   = 5,
@@ -25,8 +25,8 @@ void ui_init()
         .io_handle      = nullptr,
         .panel_handle   = display_get_panel(),
         .control_handle = nullptr,
-        .buffer_size    = LCD_H_RES * LCD_V_RES,
-        .double_buffer  = true,
+        .buffer_size    = LCD_H_RES * 40,   // kleiner Puffer, stabiler
+        .double_buffer  = false,
         .trans_size     = 0,
         .hres           = LCD_H_RES,
         .vres           = LCD_V_RES,
@@ -45,13 +45,13 @@ void ui_init()
             .buff_spiram  = true,
             .sw_rotate    = false,
             .full_refresh = false,
-            .direct_mode  = true,
+            .direct_mode  = false,
         },
     };
     const lvgl_port_display_rgb_cfg_t rgb_cfg = {
         .flags = {
-            .bb_mode       = true,   // bounce_buffer_size_px ist gesetzt
-            .avoid_tearing = true,   // num_fbs=2
+            .bb_mode       = true,
+            .avoid_tearing = false,
         },
     };
     s_disp = lvgl_port_add_disp_rgb(&disp_cfg, &rgb_cfg);
