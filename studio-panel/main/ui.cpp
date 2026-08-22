@@ -25,7 +25,7 @@ void ui_init()
         .io_handle      = nullptr,
         .panel_handle   = display_get_panel(),
         .control_handle = nullptr,
-        .buffer_size    = LCD_H_RES * LCD_V_RES,
+        .buffer_size    = LCD_H_RES * 40,
         .double_buffer  = false,
         .trans_size     = 0,
         .hres           = LCD_H_RES,
@@ -43,7 +43,7 @@ void ui_init()
             .buff_dma     = false,
             .buff_spiram  = true,
             .sw_rotate    = false,
-            .full_refresh = true,
+            .full_refresh = false,
             .direct_mode  = false,
         },
     };
