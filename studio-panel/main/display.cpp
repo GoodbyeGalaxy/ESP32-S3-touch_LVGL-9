@@ -9,7 +9,9 @@ static esp_lcd_panel_handle_t s_panel = nullptr;
 
 void display_init()
 {
-    const int data_pins[] = LCD_DATA_PINS;
+    constexpr int data_pins[] = LCD_DATA_PINS;
+    static_assert(sizeof(data_pins) / sizeof(data_pins[0]) == 16,
+                  "LCD_DATA_PINS must have exactly 16 entries for RGB565");
 
     esp_lcd_rgb_panel_config_t cfg = {};
     cfg.clk_src                      = LCD_CLK_SRC_DEFAULT;
@@ -35,7 +37,8 @@ void display_init()
     cfg.disp_gpio_num                = -1;  // Backlight via CH422G
     cfg.flags.fb_in_psram            = 1;
 
-    for (int i = 0; i < 16; i++) cfg.data_gpio_nums[i] = data_pins[i];
+    for (size_t i = 0; i < sizeof(data_pins) / sizeof(data_pins[0]); ++i)
+        cfg.data_gpio_nums[i] = data_pins[i];
 
     ESP_ERROR_CHECK(esp_lcd_new_rgb_panel(&cfg, &s_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_reset(s_panel));

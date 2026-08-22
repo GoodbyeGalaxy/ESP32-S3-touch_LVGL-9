@@ -37,7 +37,8 @@
 #define BSP_I2C_FREQ  400000
 
 // ── GT911 Touch ──────────────────────────────────────────────
-#define TOUCH_INT_PIN  GPIO_NUM_4
+#define TOUCH_INT_PIN    GPIO_NUM_4
+#define GT911_I2C_ADDR   0x5D  /* fallback: 0x14 */
 // RST läuft über CH422G EXIO1 (kein direkter GPIO)
 
 // ── CH422G IO-Expander (I2C-Adresse 0x24) ────────────────────

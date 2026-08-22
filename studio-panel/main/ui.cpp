@@ -2,6 +2,7 @@
 #include "board.h"
 #include "display.h"
 #include "touch.h"
+#include "ch422g.h"
 #include "screens/home.h"
 #include "esp_lvgl_port.h"
 #include "esp_log.h"
@@ -28,7 +29,9 @@ void ui_init()
         .hres          = LCD_H_RES,
         .vres          = LCD_V_RES,
         .monochrome    = false,
+#if LVGL_VERSION_MAJOR >= 9
         .color_format  = LV_COLOR_FORMAT_RGB565,
+#endif
         .rotation = {
             .swap_xy  = false,
             .mirror_x = false,
@@ -42,9 +45,15 @@ void ui_init()
             .direct_mode  = true,
         },
     };
-    s_disp = lvgl_port_add_disp(&disp_cfg);
+    const lvgl_port_display_rgb_cfg_t rgb_cfg = {
+        .flags = {
+            .bb_mode       = true,   // bounce_buffer_size_px ist gesetzt
+            .avoid_tearing = true,   // num_fbs=2
+        },
+    };
+    s_disp = lvgl_port_add_disp_rgb(&disp_cfg, &rgb_cfg);
     if (!s_disp) {
-        ESP_LOGE(TAG, "lvgl_port_add_disp failed");
+        ESP_LOGE(TAG, "lvgl_port_add_disp_rgb failed");
         return;
     }
 
@@ -58,6 +67,9 @@ void ui_init()
     lvgl_port_lock(0);
     home_screen_create();
     lvgl_port_unlock();
+
+    // Backlight erst einschalten wenn erster Frame bereit — kein weißer Blitz
+    ch422g_set(CH422G_LCD_RST | CH422G_LCD_BL | CH422G_TOUCH_RST);
 
     ESP_LOGI(TAG, "LVGL ready");
 }

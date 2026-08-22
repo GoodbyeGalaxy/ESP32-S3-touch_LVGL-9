@@ -14,8 +14,8 @@ extern "C" void app_main()
     ESP_LOGI(TAG, "Studio Panel booting...");
 
     ch422g_init();
-    // Backlight + Resets aktivieren
-    ch422g_set(CH422G_LCD_RST | CH422G_LCD_BL | CH422G_TOUCH_RST);
+    // RST-Pins aktivieren; Backlight kommt erst nach LVGL-Init (ui_init)
+    ch422g_set(CH422G_LCD_RST | CH422G_TOUCH_RST);
 
     display_init();
     touch_init();

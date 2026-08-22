@@ -3,7 +3,6 @@
 #include "ch422g.h"
 #include "esp_lcd_touch_gt911.h"
 #include "esp_lcd_panel_io.h"
-#include "driver/i2c.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -22,7 +21,7 @@ void touch_init()
     // I2C Panel-IO für GT911 — I2C-Bus läuft bereits durch ch422g_init()
     esp_lcd_panel_io_handle_t tp_io = nullptr;
     esp_lcd_panel_io_i2c_config_t io_cfg = {};
-    io_cfg.dev_addr                    = 0x5D;        // GT911 Standard; bei Fehler: 0x14
+    io_cfg.dev_addr                    = GT911_I2C_ADDR;
     io_cfg.scl_speed_hz                = BSP_I2C_FREQ;
     io_cfg.control_phase_bytes         = 1;
     io_cfg.dc_bit_offset               = 0;
