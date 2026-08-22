@@ -25,7 +25,7 @@ void ui_init()
         .io_handle      = nullptr,
         .panel_handle   = display_get_panel(),
         .control_handle = nullptr,
-        .buffer_size    = LCD_H_RES * 40,   // kleiner Puffer, stabiler
+        .buffer_size    = LCD_H_RES * LCD_V_RES,
         .double_buffer  = false,
         .trans_size     = 0,
         .hres           = LCD_H_RES,
@@ -44,7 +44,7 @@ void ui_init()
             .buff_spiram  = true,
             .sw_rotate    = false,
             .full_refresh = false,
-            .direct_mode  = false,
+            .direct_mode  = true,
         },
     };
     const lvgl_port_display_rgb_cfg_t rgb_cfg = {
