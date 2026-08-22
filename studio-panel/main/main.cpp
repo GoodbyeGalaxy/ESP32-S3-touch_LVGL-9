@@ -4,6 +4,7 @@
 #include "board.h"
 #include "ch422g.h"
 #include "display.h"
+#include "esp_lcd_panel_rgb.h"
 #include "touch.h"
 #include "ui.h"
 
