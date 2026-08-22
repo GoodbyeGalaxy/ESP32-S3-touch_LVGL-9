@@ -10,6 +10,7 @@ idf_component_register(
     REQUIRES
         esp_lcd
         esp_lcd_touch
+        esp_lcd_touch_gt911
         esp_lvgl_port
         esp_timer
         driver
