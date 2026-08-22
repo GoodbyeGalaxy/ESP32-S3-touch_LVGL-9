@@ -4,7 +4,6 @@
 #include "board.h"
 #include "ch422g.h"
 #include "display.h"
-#include "esp_lcd_panel_rgb.h"
 #include "touch.h"
 #include "ui.h"
 
@@ -19,17 +18,6 @@ extern "C" void app_main()
     ch422g_set(CH422G_LCD_RST | CH422G_LCD_BL | CH422G_TOUCH_RST);
 
     display_init();
-
-    // SMOKE TEST - entfernen nach Verifikation
-    {
-        void *fb = nullptr;
-        esp_lcd_rgb_panel_get_frame_buffer(display_get_panel(), 1, &fb);
-        if (fb) {
-            uint16_t *buf = static_cast<uint16_t *>(fb);
-            for (int i = 0; i < LCD_H_RES * 40; i++) buf[i] = 0xF800;  // RGB565 Rot
-        }
-    }
-
     touch_init();
     ui_init();
 
