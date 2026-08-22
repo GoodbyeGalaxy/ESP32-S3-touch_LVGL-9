@@ -42,7 +42,12 @@ void touch_init()
     tp_cfg.flags.mirror_x     = 0;
     tp_cfg.flags.mirror_y     = 0;
 
-    ESP_ERROR_CHECK(esp_lcd_touch_new_i2c_gt911(tp_io, &tp_cfg, &s_touch));
+    esp_err_t err = esp_lcd_touch_new_i2c_gt911(tp_io, &tp_cfg, &s_touch);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "GT911 init failed (0x%x) — continuing without touch", err);
+        s_touch = nullptr;
+        return;
+    }
     ESP_LOGI(TAG, "GT911 initialized");
 }
 
