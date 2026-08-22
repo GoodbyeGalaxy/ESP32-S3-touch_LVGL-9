@@ -126,6 +126,26 @@ IPS-Panel zeigt bei reinem Rot (0xFF0000) leicht Orange/Mandarin. Das ist die na
 
 ---
 
+## LVGL Hintergrundfarbe (offenes Problem)
+
+Das PSRAM initialisiert sich mit einem zufälligen Muster (oft grün = `0x07E0` in RGB565). LVGL rendert mit einem kleinen Buffer (40 Zeilen) nur "dirty areas" — der Rest des Framebuffers bleibt beim PSRAM-Initialzustand.
+
+**Was NICHT funktioniert:**
+- `lv_obj_set_style_bg_color()` direkt auf Screen-Objekte
+- Framebuffer-Pre-fill via `esp_lcd_rgb_panel_get_frame_buffer()` + `esp_cache_msync()`
+- `esp_lcd_panel_draw_bitmap()` als Pre-fill
+- `full_refresh = true` (verursacht Cycling/Flackern)
+- `direct_mode = true` (verursacht Artefakte ohne Vsync-Sync)
+- `lv_display_set_theme(disp, nullptr)` + `lv_obj_create(nullptr)` als neuer Screen
+
+**Was als nächstes evaluiert wird:**
+- LVGL Custom Theme mit dunklem Hintergrund (so machen es alle funktionierenden GitHub-Projekte)
+- `esp_lv_adapter` Komponente (Waveshare-eigene Abstraktion, nutzt andere Flush-Logik)
+
+**Merke:** Kein funktionierendes GitHub-Projekt setzt `lv_obj_set_style_bg_color` direkt auf Screen-Objekte für den Haupthintergrund — sie nutzen ausschließlich das LVGL Theme-System.
+
+---
+
 ## Entwicklungsworkflow
 
 ### Partition-Tabelle bei erstem Flash
