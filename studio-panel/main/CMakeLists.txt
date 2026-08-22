@@ -16,5 +16,4 @@ idf_component_register(
         driver
         freertos
         log
-        esp_mm
 )

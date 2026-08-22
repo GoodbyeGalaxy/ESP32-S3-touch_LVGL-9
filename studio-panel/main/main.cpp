@@ -2,7 +2,7 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_lcd_panel_rgb.h"
-#include "esp_cache.h"
+#include "esp_lcd_panel_ops.h"
 #include "board.h"
 #include "ch422g.h"
 #include "display.h"
@@ -21,16 +21,23 @@ extern "C" void app_main()
 
     display_init();
 
-    // Framebuffer mit Hintergrundfarbe vorbelegen bevor LVGL startet
-    // verhindert dass der grüne PSRAM-Initialzustand durchscheint
-    void *fb = nullptr;
-    esp_lcd_rgb_panel_get_frame_buffer(display_get_panel(), 1, &fb);
-    if (fb) {
-        uint16_t *pixels = static_cast<uint16_t *>(fb);
-        const uint16_t bg = 0xFFFF;  // DIAGNOSE: weiß — sieht man sofort ob pre-fill wirkt
-        const size_t fb_size = LCD_H_RES * LCD_V_RES * sizeof(uint16_t);
-        for (int i = 0; i < LCD_H_RES * LCD_V_RES; i++) pixels[i] = bg;
-        esp_cache_msync(fb, fb_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    // Framebuffer via draw_bitmap vorbelegen (gleicher Weg wie LVGL-Flush)
+    {
+        const uint16_t bg = 0xFFFF;  // DIAGNOSE: weiß
+        const int strip_h = 40;
+        uint16_t *strip = static_cast<uint16_t *>(
+            heap_caps_malloc(LCD_H_RES * strip_h * sizeof(uint16_t), MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));
+        if (strip) {
+            for (int i = 0; i < LCD_H_RES * strip_h; i++) strip[i] = bg;
+            for (int y = 0; y < LCD_V_RES; y += strip_h) {
+                int h = (y + strip_h <= LCD_V_RES) ? strip_h : (LCD_V_RES - y);
+                esp_lcd_panel_draw_bitmap(display_get_panel(), 0, y, LCD_H_RES, y + h, strip);
+            }
+            heap_caps_free(strip);
+            ESP_LOGI(TAG, "Framebuffer pre-filled via draw_bitmap");
+        } else {
+            ESP_LOGE(TAG, "draw_bitmap strip alloc failed");
+        }
     }
 
     touch_init();
