@@ -4,8 +4,9 @@
 
 void home_screen_create()
 {
-    lv_obj_t *scr = lv_screen_active();
-
+    // Neuen Screen erstellen — Theme ist zu diesem Zeitpunkt bereits NULL
+    // sodass keine Theme-Styles vorbelegt sind
+    lv_obj_t *scr = lv_obj_create(nullptr);
     lv_obj_set_style_bg_color(scr, lv_color_hex(0x0A0A0A), 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
 
@@ -54,4 +55,6 @@ void home_screen_create()
         lv_obj_align(c->dot, LV_ALIGN_TOP_LEFT, p.x - 10, p.y - 10);
         lv_obj_clear_flag(c->dot, LV_OBJ_FLAG_HIDDEN);
     }, LV_EVENT_PRESSING, &ctx);
+
+    lv_screen_load(scr);
 }
