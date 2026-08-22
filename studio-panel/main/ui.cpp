@@ -36,7 +36,6 @@ void ui_init()
             .mirror_x = false,
             .mirror_y = false,
         },
-        .rounder_cb = nullptr,
 #if LVGL_VERSION_MAJOR >= 9
         .color_format  = LV_COLOR_FORMAT_RGB565,
 #endif
