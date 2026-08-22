@@ -50,7 +50,7 @@ void ui_init()
     };
     const lvgl_port_display_rgb_cfg_t rgb_cfg = {
         .flags = {
-            .bb_mode       = true,
+            .bb_mode       = false,
             .avoid_tearing = false,
         },
     };

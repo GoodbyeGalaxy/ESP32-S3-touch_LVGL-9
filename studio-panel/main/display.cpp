@@ -27,8 +27,8 @@ void display_init()
     cfg.timings.flags.pclk_active_neg = 0;
     cfg.data_width                   = 16;
     cfg.bits_per_pixel               = 16;
-    cfg.num_fbs                      = 2;
-    cfg.bounce_buffer_size_px        = 10 * LCD_H_RES;
+    cfg.num_fbs                      = 1;
+    cfg.bounce_buffer_size_px        = 0;
     cfg.psram_trans_align            = 64;
     cfg.hsync_gpio_num               = LCD_PIN_HSYNC;
     cfg.vsync_gpio_num               = LCD_PIN_VSYNC;
