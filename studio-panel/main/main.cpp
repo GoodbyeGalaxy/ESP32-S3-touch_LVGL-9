@@ -2,6 +2,7 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_lcd_panel_rgb.h"
+#include "esp_cache.h"
 #include "board.h"
 #include "ch422g.h"
 #include "display.h"
@@ -27,7 +28,9 @@ extern "C" void app_main()
     if (fb) {
         uint16_t *pixels = static_cast<uint16_t *>(fb);
         const uint16_t bg = 0x0841;  // 0x0A0A0A in RGB565
+        const size_t fb_size = LCD_H_RES * LCD_V_RES * sizeof(uint16_t);
         for (int i = 0; i < LCD_H_RES * LCD_V_RES; i++) pixels[i] = bg;
+        esp_cache_msync(fb, fb_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
     }
 
     touch_init();
