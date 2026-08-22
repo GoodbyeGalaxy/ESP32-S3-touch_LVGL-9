@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git *)",
+      "Bash(idf.py *)",
+      "Bash(esptool.py *)",
+      "Bash(python -m esptool *)",
+      "Bash(bash /home/core/.claude/plugins/cache/claude-plugins-official/superpowers/*)",
+      "Bash(uv *)",
+      "Bash(make *)",
+      "Bash(cmake *)",
+      "Bash(ninja *)",
+      "Bash(mkdir *)",
+      "Bash(ls *)",
+      "Bash(ls)",
+      "Bash(find *)",
+      "Bash(cp *)",
+      "Bash(mv *)",
+      "Bash(source ~/esp/esp-idf/export.sh)",
+      "Bash(. ~/esp/esp-idf/export.sh *)",
+      "Bash(cat /mnt/source/data/coding/ESP32-S3/*)",
+      "Bash(rm -rf /mnt/source/data/coding/ESP32-S3/.superpowers/*)",
+      "Bash(jq *)"
+    ]
+  }
+}
