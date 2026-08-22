@@ -4,7 +4,7 @@
 
 void home_screen_create()
 {
-    lv_obj_t *scr = lv_scr_act();
+    lv_obj_t *scr = lv_screen_active();
 
     // Hintergrund: fast schwarz (#0A0A0A)
     lv_obj_set_style_bg_color(scr, lv_color_hex(0x0A0A0A), LV_PART_MAIN);
