@@ -14,7 +14,7 @@ void ui_init()
 {
     const lvgl_port_cfg_t port_cfg = {
         .task_priority     = 4,
-        .task_stack_size   = 8192,
+        .task_stack        = 8192,
         .task_affinity     = -1,
         .task_max_sleep_ms = 500,
         .timer_period_ms   = 5,
@@ -22,21 +22,24 @@ void ui_init()
     ESP_ERROR_CHECK(lvgl_port_init(&port_cfg));
 
     const lvgl_port_display_cfg_t disp_cfg = {
-        .io_handle     = nullptr,
-        .panel_handle  = display_get_panel(),
-        .buffer_size   = LCD_H_RES * LCD_V_RES,
-        .double_buffer = true,
-        .hres          = LCD_H_RES,
-        .vres          = LCD_V_RES,
-        .monochrome    = false,
-#if LVGL_VERSION_MAJOR >= 9
-        .color_format  = LV_COLOR_FORMAT_RGB565,
-#endif
+        .io_handle      = nullptr,
+        .panel_handle   = display_get_panel(),
+        .control_handle = nullptr,
+        .buffer_size    = LCD_H_RES * LCD_V_RES,
+        .double_buffer  = true,
+        .trans_size     = 0,
+        .hres           = LCD_H_RES,
+        .vres           = LCD_V_RES,
+        .monochrome     = false,
         .rotation = {
             .swap_xy  = false,
             .mirror_x = false,
             .mirror_y = false,
         },
+        .rounder_cb = nullptr,
+#if LVGL_VERSION_MAJOR >= 9
+        .color_format  = LV_COLOR_FORMAT_RGB565,
+#endif
         .flags = {
             .buff_dma     = false,
             .buff_spiram  = true,

@@ -29,8 +29,8 @@ void touch_init()
     io_cfg.lcd_param_bits              = 8;
     io_cfg.flags.disable_control_phase = 1;
 
-    ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c(
-        (esp_lcd_i2c_bus_handle_t)BSP_I2C_PORT, &io_cfg, &tp_io));
+    // _Generic macro not supported in C++ — call v1 (legacy I2C driver) directly
+    ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c_v1(BSP_I2C_PORT, &io_cfg, &tp_io));
 
     esp_lcd_touch_config_t tp_cfg = {};
     tp_cfg.x_max              = LCD_H_RES;
