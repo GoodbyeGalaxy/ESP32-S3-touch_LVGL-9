@@ -43,8 +43,8 @@ void ui_init()
             .buff_dma     = false,
             .buff_spiram  = true,
             .sw_rotate    = false,
-            .full_refresh = false,
-            .direct_mode  = true,
+            .full_refresh = true,
+            .direct_mode  = false,
         },
     };
     const lvgl_port_display_rgb_cfg_t rgb_cfg = {
