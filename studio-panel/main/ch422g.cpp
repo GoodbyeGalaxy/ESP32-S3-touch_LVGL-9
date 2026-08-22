@@ -4,6 +4,7 @@
 #include "esp_log.h"
 
 static const char *TAG = "ch422g";
+static uint8_t s_state = 0;
 
 void ch422g_init()
 {
@@ -24,11 +25,22 @@ void ch422g_init()
 
 void ch422g_set(uint8_t mask)
 {
+    s_state = mask;
     esp_err_t err = i2c_master_write_to_device(
         BSP_I2C_PORT, CH422G_I2C_ADDR,
-        &mask, 1,
+        &s_state, 1,
         pdMS_TO_TICKS(20));
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "CH422G write failed: %s", esp_err_to_name(err));
     }
+}
+
+void ch422g_set_bits(uint8_t bits)
+{
+    ch422g_set(s_state | bits);
+}
+
+void ch422g_clear_bits(uint8_t bits)
+{
+    ch422g_set(s_state & ~bits);
 }

@@ -13,10 +13,10 @@ static esp_lcd_touch_handle_t s_touch = nullptr;
 void touch_init()
 {
     // GT911 Reset-Sequenz: TOUCH_RST low → 10 ms → TOUCH_RST high
-    // LCD_RST und LCD_BL bleiben gesetzt; nur TOUCH_RST wird kurz low gezogen
-    ch422g_set(CH422G_LCD_RST | CH422G_LCD_BL);                      // TOUCH_RST = low
+    // LCD_RST und LCD_BL bleiben unverändert; nur TOUCH_RST wird kurz low gezogen
+    ch422g_clear_bits(CH422G_TOUCH_RST);   // nur TOUCH_RST auf Low, BL unverändert
     vTaskDelay(pdMS_TO_TICKS(10));
-    ch422g_set(CH422G_LCD_RST | CH422G_LCD_BL | CH422G_TOUCH_RST);   // TOUCH_RST = high
+    ch422g_set_bits(CH422G_TOUCH_RST);     // TOUCH_RST wieder High, BL unverändert
 
     // I2C Panel-IO für GT911 — I2C-Bus läuft bereits durch ch422g_init()
     esp_lcd_panel_io_handle_t tp_io = nullptr;
