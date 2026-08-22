@@ -59,6 +59,7 @@ void ui_init()
         return;
     }
     lv_display_set_default(s_disp);
+    lv_display_set_theme(s_disp, nullptr);
 
     // Touch nur registrieren wenn erfolgreich initialisiert
     if (touch_get_handle() != nullptr) {
