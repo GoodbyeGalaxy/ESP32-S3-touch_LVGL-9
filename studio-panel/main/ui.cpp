@@ -48,6 +48,13 @@ void ui_init()
         return;
     }
 
+    // Touch-Eingabe bei LVGL registrieren
+    const lvgl_port_touch_cfg_t touch_cfg = {
+        .disp   = s_disp,
+        .handle = touch_get_handle(),
+    };
+    lvgl_port_add_touch(&touch_cfg);
+
     lvgl_port_lock(0);
     home_screen_create();
     lvgl_port_unlock();
