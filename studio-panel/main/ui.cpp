@@ -71,12 +71,18 @@ void ui_init()
         ESP_LOGW(TAG, "Touch not available, skipping registration");
     }
 
-    lvgl_port_lock(0);
-    home_screen_create();
-    lvgl_port_unlock();
+    ESP_LOGI(TAG, "Acquiring LVGL lock...");
+    bool locked = lvgl_port_lock(5000);
+    ESP_LOGI(TAG, "Lock acquired: %d", locked);
+    if (locked) {
+        ESP_LOGI(TAG, "Creating home screen...");
+        home_screen_create();
+        ESP_LOGI(TAG, "Home screen created");
+        lvgl_port_unlock();
+    } else {
+        ESP_LOGE(TAG, "Failed to acquire LVGL lock");
+    }
 
-    // Backlight erst einschalten wenn erster Frame bereit — kein weißer Blitz
     ch422g_set(CH422G_LCD_RST | CH422G_LCD_BL | CH422G_TOUCH_RST);
-
     ESP_LOGI(TAG, "LVGL ready");
 }
