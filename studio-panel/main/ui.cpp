@@ -59,8 +59,6 @@ void ui_init()
         return;
     }
     lv_display_set_default(s_disp);
-    lv_display_set_bg_color(s_disp, lv_color_hex(0x0A0A0A));
-    lv_display_set_bg_opa(s_disp, LV_OPA_COVER);
 
     // Touch nur registrieren wenn erfolgreich initialisiert
     if (touch_get_handle() != nullptr) {

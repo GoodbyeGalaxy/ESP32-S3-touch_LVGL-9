@@ -6,8 +6,9 @@ void home_screen_create()
 {
     lv_obj_t *scr = lv_screen_active();
 
-    // Hintergrund: fast schwarz (#0A0A0A)
-    lv_obj_set_style_bg_color(scr, lv_color_hex(0x0A0A0A), LV_PART_MAIN);
+    lv_obj_remove_style_all(scr);
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x0A0A0A), 0);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
 
     // Titelzeile oben (subtiles Grau)
