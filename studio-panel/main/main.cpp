@@ -7,6 +7,7 @@
 #include "touch.h"
 #include "ui.h"
 #include "esp_lv_adapter.h"
+#include "audio_data.h"
 
 static const char *TAG = "main";
 
@@ -24,6 +25,10 @@ extern "C" void app_main()
     ch422g_touch_reset();
     touch_init(i2c_bus);
     ch422g_backlight_on();
+
+    g_audio_queue = xQueueCreate(2, sizeof(AudioPacket));
+    configASSERT(g_audio_queue != nullptr);
+
     ui_init();
 
     ESP_LOGI(TAG, "Boot complete.");

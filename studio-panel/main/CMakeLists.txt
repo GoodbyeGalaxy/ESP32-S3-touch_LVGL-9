@@ -1,6 +1,7 @@
 idf_component_register(
     SRCS
         "main.cpp"
+        "audio_data.cpp"
         "ch422g.cpp"
         "display.cpp"
         "touch.cpp"
