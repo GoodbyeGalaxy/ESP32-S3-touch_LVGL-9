@@ -2,9 +2,11 @@
 #include "lvgl.h"
 
 // ── Farben ────────────────────────────────────────────────────
-// Brightness 0..100 — IPS-Panel: unter ~37 zeigt Grüntint. Testen: 28→32→37
-#define THEME_BG_BRIGHTNESS   28
-#define THEME_BG_PRIMARY      lv_color_hsv_to_rgb(0, 0, THEME_BG_BRIGHTNESS)
+// IPS-Panel kompensieren: H=300 (Magenta) neutralisiert Grüntint, S=Stärke, V=Helligkeit
+#define THEME_BG_HUE        300   // 300=Magenta gegen Grüntint, 0=neutrales Grau
+#define THEME_BG_SAT        12    // Sättigung Tint 0..20 (höher = mehr Magenta)
+#define THEME_BG_BRIGHTNESS 28    // Helligkeit 0..100
+#define THEME_BG_PRIMARY    lv_color_hsv_to_rgb(THEME_BG_HUE, THEME_BG_SAT, THEME_BG_BRIGHTNESS)
 #define THEME_BG_CARD         lv_color_hex(0x747474)   // Kacheln / Cards
 #define THEME_BG_CARD_HOVER   lv_color_hex(0x888888)   // Pressed-State
 #define THEME_ACCENT          lv_color_hex(0x3B82F6)   // Primärfarbe (Blau)
