@@ -27,7 +27,7 @@ void MeterEngine::reset()
     ppm_i_l_  = ppm_i_r_  = -60.0f;
     ppm_ii_l_ = ppm_ii_r_ = -60.0f;
     peak_hold_l_ = peak_hold_r_ = -60.0f;
-    peak_hold_timer_ = 0.0f;
+    peak_hold_timer_l_ = peak_hold_timer_r_ = 0.0f;
     demo_time_ = demo_phase_ = demo_env_ = 0.0f;
     demo_rms_sq_l_ = demo_rms_sq_r_ = 0.0f;
     demo_m_acc_ = demo_s_acc_ = demo_i_acc_ = 0.0f;
@@ -134,13 +134,14 @@ void MeterEngine::update_ballistics(float dt)
     r_.ppm_ii_l = ppm_ii_l_;
     r_.ppm_ii_r = ppm_ii_r_;
 
-    // Peak hold: 3s freeze, 30 dB/s decay
-    if (r_.peak_l >= peak_hold_l_) { peak_hold_l_ = r_.peak_l; peak_hold_timer_ = 3.0f; }
-    else if (peak_hold_timer_ > 0.0f) peak_hold_timer_ -= dt;
+    // Peak hold: 3s freeze, 30 dB/s decay — independent L/R timers
+    if (r_.peak_l >= peak_hold_l_) { peak_hold_l_ = r_.peak_l; peak_hold_timer_l_ = 3.0f; }
+    else if (peak_hold_timer_l_ > 0.0f) peak_hold_timer_l_ -= dt;
     else peak_hold_l_ = std::max(peak_hold_l_ - 30.0f * dt, -60.0f);
 
-    if (r_.peak_r >= peak_hold_r_) peak_hold_r_ = r_.peak_r;
-    else if (peak_hold_timer_ <= 0.0f) peak_hold_r_ = std::max(peak_hold_r_ - 30.0f * dt, -60.0f);
+    if (r_.peak_r >= peak_hold_r_) { peak_hold_r_ = r_.peak_r; peak_hold_timer_r_ = 3.0f; }
+    else if (peak_hold_timer_r_ > 0.0f) peak_hold_timer_r_ -= dt;
+    else peak_hold_r_ = std::max(peak_hold_r_ - 30.0f * dt, -60.0f);
 
     r_.peak_hold_l = peak_hold_l_;
     r_.peak_hold_r = peak_hold_r_;

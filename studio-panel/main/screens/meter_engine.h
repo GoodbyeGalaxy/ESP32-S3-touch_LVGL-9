@@ -48,7 +48,8 @@ private:
     float vu_pwr_l_,  vu_pwr_r_;
     float ppm_i_l_,   ppm_i_r_;
     float ppm_ii_l_,  ppm_ii_r_;
-    float peak_hold_l_, peak_hold_r_, peak_hold_timer_;
+    float peak_hold_l_, peak_hold_r_;
+    float peak_hold_timer_l_, peak_hold_timer_r_;
     float band_smoothed_[6];
 
     // Demo fallback state (used when no UDP data)

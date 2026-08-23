@@ -6,24 +6,34 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "nvs_flash.h"
+#include "lvgl.h"
 #include <atomic>
 #include <cstring>
 
 static const char *TAG = "wifi";
 static std::atomic<bool> s_connected{false};
 
+// lv_async_call callback — runs in LVGL task, safe to touch widgets.
+// arg encodes state: (void*)1 = connected, nullptr = disconnected.
+static void wifi_statusbar_async(void *arg)
+{
+    statusbar_update_wifi(arg != nullptr);
+}
+
 // Handles both WIFI_EVENT (disconnect) and IP_EVENT (got-IP) in a single callback.
+// Runs in the system event-loop task — must NOT touch LVGL widgets directly.
+// Widget updates are posted via lv_async_call to be executed in the LVGL task.
 static void wifi_event_handler(void *arg, esp_event_base_t base,
                                 int32_t id, void *data)
 {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         s_connected = false;
-        statusbar_update_wifi(false);
+        lv_async_call(wifi_statusbar_async, nullptr);
         ESP_LOGW(TAG, "Disconnected — reconnecting");
         esp_wifi_connect();
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         s_connected = true;
-        statusbar_update_wifi(true);
+        lv_async_call(wifi_statusbar_async, (void*)1);
         auto *event = static_cast<ip_event_got_ip_t*>(data);
         ESP_LOGI(TAG, "IP: " IPSTR, IP2STR(&event->ip_info.ip));
         net_receiver_start();  // safe to call multiple times — idempotent
