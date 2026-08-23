@@ -225,9 +225,14 @@ void SkinDigital::create_gonio(lv_obj_t *parent)
 
 void SkinDigital::update_gonio(const MeterReadings &r)
 {
-    // Phosphor-Abkling: ×220/256 ≈ ×0.86 → nach ~42 Ticks auf 1%
-    for (int i = 0; i < 250 * 250; i++) {
-        brightness_[i] = (uint8_t)((uint32_t)brightness_[i] * 220 >> 8);
+    // Decay + Render nur jeden 2. Frame (15Hz) — halbiert PSRAM-Bandbreite bei LCD-DMA-Konkurrenz
+    bool do_decay = ((++gonio_frame_) & 1) == 0;
+
+    if (do_decay) {
+        // Phosphor-Abkling: ×220/256 ≈ ×0.86 → nach ~84 Ticks (2.8s) auf 1%
+        for (int i = 0; i < 250 * 250; i++) {
+            brightness_[i] = (uint8_t)((uint32_t)brightness_[i] * 220 >> 8);
+        }
     }
 
     if (!r.demo_mode) {
@@ -253,7 +258,7 @@ void SkinDigital::update_gonio(const MeterReadings &r)
         set(cx-1, cy+1, 100); set(cx+1, cy+1, 100);
     }
 
-    render_phosphor();
+    if (do_decay) render_phosphor();
 }
 
 // ── History graph ─────────────────────────────────────────────────────────────

@@ -11,7 +11,8 @@ public:
 private:
     // Goniometer phosphor model
     void      *gonio_buf_    = nullptr;   // RGB565 canvas pixels (PSRAM, 250×250×2)
-    uint8_t   *brightness_   = nullptr;   // per-pixel brightness 0..255 (PSRAM, 250×250)
+    uint8_t   *brightness_   = nullptr;   // per-pixel brightness 0..255 (DRAM preferred)
+    int        gonio_frame_  = 0;         // frame counter for 15Hz decay throttle
 
     // Bar widget data (passed as user_data to draw_cb)
     struct BarData { float rms_db; float peak_hold_db; };
