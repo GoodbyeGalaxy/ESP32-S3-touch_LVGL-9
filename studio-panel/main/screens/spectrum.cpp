@@ -12,6 +12,46 @@
 
 static const char *TAG = "spectrum";
 
+// ── Color LUTs ────────────────────────────────────────────────────────────────
+
+// 4 color presets, each a 256-entry LUT mapping magnitude (0..255) → color.
+// Initialized at screen create time; fast per-pixel lookup during waterfall update.
+static lv_color_t s_lut[4][256];
+
+// pre-computes 4×256 LUT at screen create time — fast per-pixel lookup during waterfall
+static void init_color_luts()
+{
+    // Helper: linearly interpolate between two packed hex RGB colors
+    auto lerp_hex = [](uint32_t a, uint32_t b, float t) -> lv_color_t {
+        uint8_t r  = (uint8_t)(((a >> 16) & 0xFF) + t * (((b >> 16) & 0xFF) - ((a >> 16) & 0xFF)));
+        uint8_t g  = (uint8_t)(((a >>  8) & 0xFF) + t * (((b >>  8) & 0xFF) - ((a >>  8) & 0xFF)));
+        uint8_t bl = (uint8_t)(( a        & 0xFF) + t * (( b        & 0xFF) - ( a        & 0xFF)));
+        return lv_color_make(r, g, bl);
+    };
+
+    // Preset 0 — Classic: Black→Blue→Cyan→Yellow→Red→White
+    static const uint32_t C0[] = {0x000000, 0x0000AA, 0x00AAAA, 0xAAAA00, 0xAA0000, 0xFFFFFF};
+    // Preset 1 — Green: Black→DarkGreen→BrightGreen→White
+    static const uint32_t C1[] = {0x000000, 0x003300, 0x30BC30, 0xFFFFFF};
+    // Preset 2 — Warm: Black→DarkRed→Orange→Yellow→White
+    static const uint32_t C2[] = {0x000000, 0x550000, 0xC84000, 0xE0B020, 0xFFFFFF};
+    // Preset 3 — Purple: Black→DarkViolet→Magenta→White
+    static const uint32_t C3[] = {0x000000, 0x330033, 0xC020C0, 0xFFFFFF};
+
+    auto fill_lut = [&](int preset, const uint32_t *stops, int n_stops) {
+        for (int i = 0; i < 256; i++) {
+            float t  = (float)i / 255.0f * (n_stops - 1);
+            int   lo = (int)t;
+            int   hi = std::min(lo + 1, n_stops - 1);
+            s_lut[preset][i] = lerp_hex(stops[lo], stops[hi], t - lo);
+        }
+    };
+    fill_lut(0, C0, 6);
+    fill_lut(1, C1, 4);
+    fill_lut(2, C2, 5);
+    fill_lut(3, C3, 4);
+}
+
 // ── Data ──────────────────────────────────────────────────────────────────────
 
 struct SpectrumScreenData {
@@ -134,8 +174,6 @@ static void spectrum_curve_draw(lv_event_t *e);
 static void spectrum_wf_update(SpectrumScreenData *d);
 static void spectrum_ctx_menu_show(SpectrumScreenData *d);
 static void spectrum_ctx_menu_hide(SpectrumScreenData *d);
-
-// ── Placeholder stubs (replaced in Tasks 6-8) ────────────────────────────────
 
 // maps screen pixel to FFT bin on log frequency scale (20Hz–20kHz)
 static int x_to_bin(int x, int w)
@@ -284,9 +322,108 @@ static void spectrum_curve_draw(lv_event_t *e)
         }
     }
 }
-static void spectrum_wf_update(SpectrumScreenData *) {}
-static void spectrum_ctx_menu_show(SpectrumScreenData *) {}
-static void spectrum_ctx_menu_hide(SpectrumScreenData *) {}
+// called from timer at ~30 Hz; shifts canvas RTL via memmove, writes new right column
+static void spectrum_wf_update(SpectrumScreenData *d)
+{
+    if (!d->wf_canvas || !d->wf_buf) return;
+
+    constexpr int WF_W = 800;
+    constexpr int WF_H = 388;
+    uint16_t *buf = static_cast<uint16_t*>(d->wf_buf);
+
+    if (d->wf_rtl) {
+        // Shift all columns one pixel to the left (oldest data moves left and disappears)
+        for (int y = 0; y < WF_H; y++) {
+            memmove(&buf[y * WF_W], &buf[y * WF_W + 1], (WF_W - 1) * sizeof(uint16_t));
+        }
+
+        // Write new column on the right edge
+        // y=0 is top (high freq), y=WF_H-1 is bottom (low freq)
+        for (int y = 0; y < WF_H; y++) {
+            int bin = (int)((1.0f - (float)y / (float)(WF_H - 1)) * 255.0f);
+            bin = std::max(0, std::min(255, bin));
+            float mag = d->smoothed[bin];
+            int lut_idx = (int)(mag * 255.0f);
+            lut_idx = std::max(0, std::min(255, lut_idx));
+            lv_color_t col = s_lut[d->color_preset][lut_idx];
+            // Convert lv_color_t to RGB565
+            buf[y * WF_W + (WF_W - 1)] =
+                ((col.red >> 3) << 11) | ((col.green >> 2) << 5) | (col.blue >> 3);
+        }
+    }
+
+    lv_obj_invalidate(d->wf_canvas);
+}
+
+// Per-swatch user_data; carries pointer to screen data and the preset index.
+// Allocated when context menu is created; freed when swatch is tapped or menu is hidden.
+struct SwatchData { SpectrumScreenData *d; uint8_t preset; };
+
+// deletes ctx_menu overlay and cleans up SwatchData user_data
+static void spectrum_ctx_menu_hide(SpectrumScreenData *d)
+{
+    if (!d->ctx_menu) return;
+    // Clean up SwatchData objects stored in each swatch child's user_data
+    uint32_t child_cnt = lv_obj_get_child_count(d->ctx_menu);
+    for (uint32_t i = 0; i < child_cnt; i++) {
+        lv_obj_t *child = lv_obj_get_child(d->ctx_menu, i);
+        auto *sw_data = static_cast<SwatchData*>(lv_obj_get_user_data(child));
+        if (sw_data) {
+            lv_obj_set_user_data(child, nullptr);
+            delete sw_data;
+        }
+    }
+    lv_obj_delete(d->ctx_menu);
+    d->ctx_menu = nullptr;
+}
+
+// creates overlay on lv_layer_top; tapping swatch changes preset and closes menu
+static void spectrum_ctx_menu_show(SpectrumScreenData *d)
+{
+    if (d->ctx_menu) return;
+
+    lv_obj_t *menu = lv_obj_create(lv_layer_top());
+    lv_obj_set_size(menu, 320, 80);
+    lv_obj_align(menu, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(menu, lv_color_hex(0x686868), 0);
+    lv_obj_set_style_bg_opa(menu, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(menu, THEME_RADIUS, 0);
+    lv_obj_set_style_border_width(menu, 0, 0);
+    lv_obj_clear_flag(menu, LV_OBJ_FLAG_SCROLLABLE);
+    d->ctx_menu = menu;
+
+    // Representative midpoint colors for each gradient preset
+    static const uint32_t SWATCH_COLORS[4] = {0x0055AA, 0x30BC30, 0xC84000, 0xC020C0};
+
+    for (int i = 0; i < 4; i++) {
+        lv_obj_t *sw = lv_obj_create(menu);
+        lv_obj_set_size(sw, 60, 36);
+        lv_obj_set_pos(sw, 8 + i * 76, 22);
+        lv_obj_set_style_bg_color(sw, lv_color_hex(SWATCH_COLORS[i]), 0);
+        lv_obj_set_style_bg_opa(sw, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(sw, 4, 0);
+        lv_obj_set_style_border_color(sw, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_border_width(sw, (d->color_preset == (uint8_t)i) ? 2 : 0, 0);
+        lv_obj_set_style_border_opa(sw, LV_OPA_COVER, 0);
+        lv_obj_clear_flag(sw, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(sw, LV_OBJ_FLAG_CLICKABLE);
+
+        // Store d + preset in user_data struct; freed in spectrum_ctx_menu_hide
+        auto *sw_data = new SwatchData{d, (uint8_t)i};
+        lv_obj_set_user_data(sw, sw_data);
+        lv_obj_add_event_cb(sw, [](lv_event_t *ev) {
+            auto *sd = static_cast<SwatchData*>(lv_obj_get_user_data(lv_event_get_target_obj(ev)));
+            sd->d->color_preset = sd->preset;
+            spectrum_ctx_menu_hide(sd->d);
+        }, LV_EVENT_CLICKED, nullptr);
+    }
+
+    // Click-outside-to-close: handled by click on lv_layer_top background
+    lv_obj_add_event_cb(lv_layer_top(), [](lv_event_t *ev) {
+        auto *d2 = static_cast<SpectrumScreenData*>(lv_event_get_user_data(ev));
+        spectrum_ctx_menu_hide(d2);
+    }, LV_EVENT_CLICKED, d);
+}
 
 // ── Freeze icon helper ────────────────────────────────────────────────────────
 
@@ -437,6 +574,16 @@ static void on_bars_delete(lv_event_t *e)
     delete d;
 }
 
+// ── Long-press handler for waterfall context menu ─────────────────────────────
+
+// Toggles the color-preset context menu on a long press of the waterfall canvas.
+static void on_wf_long_press(lv_event_t *e)
+{
+    auto *d = static_cast<SpectrumScreenData*>(lv_event_get_user_data(e));
+    if (d->ctx_menu) spectrum_ctx_menu_hide(d);
+    else             spectrum_ctx_menu_show(d);
+}
+
 // ── Public entry point ────────────────────────────────────────────────────────
 
 // Creates all three spectrum screens and the shared data struct.
@@ -450,6 +597,9 @@ lv_obj_t *spectrum_screen_create()
         return s_data->scr_bars;
     }
 
+    // pre-computes 4×256 LUT at screen create time — fast per-pixel lookup during waterfall
+    init_color_luts();
+
     auto *d = new SpectrumScreenData{};
     d->wf_rtl      = true;   // right-to-left default
     d->color_preset = 0;     // Classic
@@ -457,8 +607,23 @@ lv_obj_t *spectrum_screen_create()
     // Create three screens
     d->scr_bars      = make_spectrum_screen(on_back_bars,  spectrum_bars_draw,  d, &d->bars_canvas,  &d->freeze_icon_bars);
     d->scr_curve     = make_spectrum_screen(on_back_curve, spectrum_curve_draw, d, &d->curve_canvas, &d->freeze_icon_curve);
-    d->scr_waterfall = make_spectrum_screen(on_back_wf,    nullptr,             d, nullptr,           &d->freeze_icon_wf);
-    // waterfall gets its own canvas in Task 8
+    d->scr_waterfall = make_spectrum_screen(on_back_wf, nullptr, d, nullptr, &d->freeze_icon_wf);
+
+    // Waterfall canvas: full width, height minus statusbar and back-button area (RGB565, PSRAM)
+    constexpr int WF_W = 800;
+    constexpr int WF_H = 388;  // 480 - 32 (statusbar) - 60 (back btn area)
+    size_t wf_size = WF_W * WF_H * sizeof(uint16_t);
+    d->wf_buf = heap_caps_malloc(wf_size, MALLOC_CAP_SPIRAM);
+    if (!d->wf_buf) d->wf_buf = malloc(wf_size);      // internal RAM fallback
+    if (d->wf_buf) memset(d->wf_buf, 0, wf_size);
+
+    d->wf_canvas = lv_canvas_create(d->scr_waterfall);
+    lv_canvas_set_buffer(d->wf_canvas, d->wf_buf, WF_W, WF_H, LV_COLOR_FORMAT_RGB565);
+    lv_obj_set_pos(d->wf_canvas, 0, THEME_STATUSBAR_H);
+
+    // Long-press on waterfall canvas opens/closes the color-preset context menu
+    lv_obj_add_flag(d->wf_canvas, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(d->wf_canvas, on_wf_long_press, LV_EVENT_LONG_PRESSED, d);
 
     // Cleanup only on bars screen delete (first created, first destroyed on exit)
     lv_obj_add_event_cb(d->scr_bars, on_bars_delete, LV_EVENT_DELETE, d);
