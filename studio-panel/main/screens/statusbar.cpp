@@ -20,11 +20,24 @@ void statusbar_init()
     lv_obj_set_style_pad_all(s_bar, 0, 0);
     lv_obj_clear_flag(s_bar, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Titel links
+    // Titel links — Pill mit dezenter Glow
     s_title = lv_label_create(s_bar);
     lv_label_set_text(s_title, "STUDIO PANEL");
-    lv_obj_set_style_text_color(s_title, THEME_TEXT_SECONDARY, 0);
+    lv_obj_set_style_text_color(s_title, THEME_TEXT_TITLE, 0);
     lv_obj_set_style_text_font(s_title, THEME_FONT_HINT, 0);
+    // Pill-Hintergrund
+    lv_obj_set_style_bg_color(s_title, lv_color_hex(0x484848), 0);
+    lv_obj_set_style_bg_opa(s_title, LV_OPA_80, 0);
+    lv_obj_set_style_radius(s_title, 5, 0);
+    lv_obj_set_style_pad_hor(s_title, 8, 0);
+    lv_obj_set_style_pad_ver(s_title, 2, 0);
+    // Outer Glow (Offset 0/0 = gleichmäßig rundum)
+    lv_obj_set_style_shadow_width(s_title, 8, 0);
+    lv_obj_set_style_shadow_color(s_title, THEME_ACCENT, 0);
+    lv_obj_set_style_shadow_opa(s_title, LV_OPA_20, 0);
+    lv_obj_set_style_shadow_spread(s_title, 1, 0);
+    lv_obj_set_style_shadow_offset_x(s_title, 0, 0);
+    lv_obj_set_style_shadow_offset_y(s_title, 0, 0);
     lv_obj_align(s_title, LV_ALIGN_LEFT_MID, 12, 0);
 
     // Zeit rechts
