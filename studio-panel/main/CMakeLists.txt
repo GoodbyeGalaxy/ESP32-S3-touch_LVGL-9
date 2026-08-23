@@ -8,10 +8,12 @@ idf_component_register(
         "screens/home.cpp"
     INCLUDE_DIRS "."
     REQUIRES
+        esp_driver_i2c
+        esp_mm
         esp_lcd
         esp_lcd_touch
         esp_lcd_touch_gt911
-        esp_lvgl_port
+        esp_lvgl_adapter
         esp_timer
         driver
         freertos

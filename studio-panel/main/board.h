@@ -1,6 +1,6 @@
 #pragma once
 #include "driver/gpio.h"
-#include "driver/i2c.h"
+#include "driver/i2c_master.h"
 
 // ── Auflösung ─────────────────────────────────────────────────
 #define LCD_H_RES    800
@@ -31,7 +31,8 @@
 #define LCD_VSYNC_FP     8
 
 // ── I2C Bus (Touch + IO-Expander teilen denselben Bus) ────────
-#define BSP_I2C_PORT  I2C_NUM_0
+// Neue I2C-Master-API (IDF 5.x): i2c_port_num_t (0 = I2C0)
+#define BSP_I2C_PORT  (0)
 #define BSP_I2C_SDA   GPIO_NUM_8
 #define BSP_I2C_SCL   GPIO_NUM_9
 #define BSP_I2C_FREQ  400000
@@ -41,9 +42,14 @@
 #define GT911_I2C_ADDR   0x5D  /* fallback: 0x14 */
 // RST läuft über CH422G EXIO1 (kein direkter GPIO)
 
-// ── CH422G IO-Expander (I2C-Adresse 0x24) ────────────────────
-// Jedes Bit entspricht einem EXIO-Ausgang
-#define CH422G_I2C_ADDR   0x24
-#define CH422G_TOUCH_RST  (1 << 1)   // EXIO1
-#define CH422G_LCD_BL     (1 << 2)   // EXIO2 – Backlight
-#define CH422G_LCD_RST    (1 << 3)   // EXIO3 – Display Reset
+// ── CH422G IO-Expander — Zwei-Adressen-Protokoll ─────────────
+// 0x24 = OE-Register (Output Enable, einmalig 0x01 schreiben)
+// 0x38 = Datenregister (Output-Bits setzen)
+// Quelle: Waveshare ESP-IDF Demo 09_lvgl_v9_demo/components
+#define CH422G_OE_ADDR    0x24   // Output-Enable-Register
+#define CH422G_OUT_ADDR   0x38   // Output-Daten-Register
+
+// Byte-Werte für das Datenregister (aus Waveshare-Demo übernommen)
+#define CH422G_VAL_BL_ON       0x1E  // Backlight + alle Resets released
+#define CH422G_VAL_TOUCH_RST_L 0x2C  // Touch-RST low (Reset aktiv), BL+LCD-RST bleiben
+#define CH422G_VAL_TOUCH_RST_H 0x2E  // Touch-RST high (Reset released)

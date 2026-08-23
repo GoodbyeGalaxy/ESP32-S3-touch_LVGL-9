@@ -1,12 +1,12 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
-#include "esp_lcd_panel_rgb.h"
 #include "board.h"
 #include "ch422g.h"
 #include "display.h"
 #include "touch.h"
 #include "ui.h"
+#include "esp_lv_adapter.h"
 
 static const char *TAG = "main";
 
@@ -14,13 +14,16 @@ extern "C" void app_main()
 {
     ESP_LOGI(TAG, "Studio Panel booting...");
 
-    ch422g_init();
-    // RST-Pins aktivieren; Backlight kommt erst nach LVGL-Init (ui_init)
-    ch422g_set(CH422G_LCD_RST | CH422G_TOUCH_RST);
+    uint8_t num_fbs = esp_lv_adapter_get_required_frame_buffer_count(
+        ESP_LV_ADAPTER_TEAR_AVOID_MODE_TRIPLE_PARTIAL,
+        ESP_LV_ADAPTER_ROTATE_0);
+    ESP_LOGI(TAG, "esp_lvgl_adapter requires %u frame buffer(s)", num_fbs);
 
-    display_init();
-
-    touch_init();
+    i2c_master_bus_handle_t i2c_bus = ch422g_init();
+    display_init(num_fbs);
+    ch422g_touch_reset();
+    touch_init(i2c_bus);
+    ch422g_backlight_on();
     ui_init();
 
     ESP_LOGI(TAG, "Boot complete.");

@@ -3,44 +3,40 @@
 #include "ch422g.h"
 #include "esp_lcd_touch_gt911.h"
 #include "esp_lcd_panel_io.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include "esp_log.h"
 
 static const char *TAG = "touch";
 static esp_lcd_touch_handle_t s_touch = nullptr;
 
-void touch_init()
+void touch_init(i2c_master_bus_handle_t i2c_bus)
 {
-    // GT911 Reset-Sequenz: TOUCH_RST low → 10 ms → TOUCH_RST high
-    // LCD_RST und LCD_BL bleiben unverändert; nur TOUCH_RST wird kurz low gezogen
-    ch422g_clear_bits(CH422G_TOUCH_RST);   // nur TOUCH_RST auf Low, BL unverändert
-    vTaskDelay(pdMS_TO_TICKS(10));
-    ch422g_set_bits(CH422G_TOUCH_RST);     // TOUCH_RST wieder High, BL unverändert
+    // Reset-Sequenz wurde bereits in main.cpp via ch422g_touch_reset() durchgeführt.
+    // Nutze den neuen I2C-Master-API-Handle (kompatibel mit esp_lcd_new_panel_io_i2c_v2).
 
-    // I2C Panel-IO für GT911 — I2C-Bus läuft bereits durch ch422g_init()
     esp_lcd_panel_io_handle_t tp_io = nullptr;
+
+    // v2-Variante: nimmt i2c_master_bus_handle_t statt Port-Nummer
     esp_lcd_panel_io_i2c_config_t io_cfg = {};
     io_cfg.dev_addr                    = GT911_I2C_ADDR;
+    io_cfg.scl_speed_hz                = BSP_I2C_FREQ;
     io_cfg.control_phase_bytes         = 1;
     io_cfg.dc_bit_offset               = 0;
     io_cfg.lcd_cmd_bits                = 16;
     io_cfg.lcd_param_bits              = 8;
     io_cfg.flags.disable_control_phase = 1;
 
-    // _Generic macro not supported in C++ — call v1 (legacy I2C driver) directly
-    ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c_v1(BSP_I2C_PORT, &io_cfg, &tp_io));
+    ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c_v2(i2c_bus, &io_cfg, &tp_io));
 
     esp_lcd_touch_config_t tp_cfg = {};
-    tp_cfg.x_max              = LCD_H_RES;
-    tp_cfg.y_max              = LCD_V_RES;
-    tp_cfg.rst_gpio_num       = GPIO_NUM_NC;   // Reset via CH422G, kein direkter GPIO
-    tp_cfg.int_gpio_num       = TOUCH_INT_PIN;
-    tp_cfg.levels.reset       = 0;
-    tp_cfg.levels.interrupt   = 0;
-    tp_cfg.flags.swap_xy      = 0;
-    tp_cfg.flags.mirror_x     = 0;
-    tp_cfg.flags.mirror_y     = 0;
+    tp_cfg.x_max            = LCD_H_RES;
+    tp_cfg.y_max            = LCD_V_RES;
+    tp_cfg.rst_gpio_num     = GPIO_NUM_NC;  // Reset via CH422G
+    tp_cfg.int_gpio_num     = GPIO_NUM_NC;  // INT-Pin separat konfiguriert
+    tp_cfg.levels.reset     = 0;
+    tp_cfg.levels.interrupt = 0;
+    tp_cfg.flags.swap_xy    = 0;
+    tp_cfg.flags.mirror_x   = 0;
+    tp_cfg.flags.mirror_y   = 0;
 
     esp_err_t err = esp_lcd_touch_new_i2c_gt911(tp_io, &tp_cfg, &s_touch);
     if (err != ESP_OK) {

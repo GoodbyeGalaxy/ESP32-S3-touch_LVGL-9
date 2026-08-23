@@ -2,88 +2,52 @@
 #include "board.h"
 #include "display.h"
 #include "touch.h"
-#include "ch422g.h"
 #include "screens/home.h"
-#include "esp_lvgl_port.h"
+#include "esp_lv_adapter.h"
+#include "lvgl.h"
 #include "esp_log.h"
 
 static const char *TAG = "ui";
-static lv_display_t *s_disp = nullptr;
 
 void ui_init()
 {
-    const lvgl_port_cfg_t port_cfg = {
-        .task_priority     = 4,
-        .task_stack        = 16384,
-        .task_affinity     = -1,
-        .task_max_sleep_ms = 500,
-        .timer_period_ms   = 5,
-    };
-    ESP_ERROR_CHECK(lvgl_port_init(&port_cfg));
+    esp_lv_adapter_config_t cfg = ESP_LV_ADAPTER_DEFAULT_CONFIG();
+    cfg.task_stack_size = 16384;
+    cfg.stack_in_psram  = true;
+    ESP_ERROR_CHECK(esp_lv_adapter_init(&cfg));
 
-    const lvgl_port_display_cfg_t disp_cfg = {
-        .io_handle      = nullptr,
-        .panel_handle   = display_get_panel(),
-        .control_handle = nullptr,
-        .buffer_size    = LCD_H_RES * 40,
-        .double_buffer  = false,
-        .trans_size     = 0,
-        .hres           = LCD_H_RES,
-        .vres           = LCD_V_RES,
-        .monochrome     = false,
-        .rotation = {
-            .swap_xy  = false,
-            .mirror_x = false,
-            .mirror_y = false,
-        },
-#if LVGL_VERSION_MAJOR >= 9
-        .color_format  = LV_COLOR_FORMAT_RGB565,
-#endif
-        .flags = {
-            .buff_dma     = false,
-            .buff_spiram  = true,
-            .sw_rotate    = false,
-            .full_refresh = false,
-            .direct_mode  = false,
-        },
-    };
-    const lvgl_port_display_rgb_cfg_t rgb_cfg = {
-        .flags = {
-            .bb_mode       = false,
-            .avoid_tearing = false,
-        },
-    };
-    s_disp = lvgl_port_add_disp_rgb(&disp_cfg, &rgb_cfg);
-    if (!s_disp) {
-        ESP_LOGE(TAG, "lvgl_port_add_disp_rgb failed");
+    esp_lv_adapter_display_config_t disp_cfg =
+        ESP_LV_ADAPTER_DISPLAY_RGB_DEFAULT_CONFIG(
+            display_get_panel(), NULL,
+            LCD_H_RES, LCD_V_RES,
+            ESP_LV_ADAPTER_ROTATE_0);
+    disp_cfg.tear_avoid_mode   = ESP_LV_ADAPTER_TEAR_AVOID_MODE_TRIPLE_PARTIAL;
+    disp_cfg.profile.use_psram = true;
+
+    lv_display_t *disp = esp_lv_adapter_register_display(&disp_cfg);
+    if (!disp) {
+        ESP_LOGE(TAG, "esp_lv_adapter_register_display failed");
         return;
     }
-    lv_display_set_default(s_disp);
-    lv_display_set_theme(s_disp, nullptr);
 
-    // Touch nur registrieren wenn erfolgreich initialisiert
+    // Theme deaktivieren: verhindert dass Theme-Padding den Screen-Rand
+    // unbedeckt lässt und PSRAM-Grün durchscheint.
+    lv_display_set_theme(disp, nullptr);
+
     if (touch_get_handle() != nullptr) {
-        const lvgl_port_touch_cfg_t touch_cfg = {
-            .disp   = s_disp,
-            .handle = touch_get_handle(),
-        };
-        lvgl_port_add_touch(&touch_cfg);
-    } else {
-        ESP_LOGW(TAG, "Touch not available, skipping registration");
+        esp_lv_adapter_touch_config_t touch_cfg =
+            ESP_LV_ADAPTER_TOUCH_DEFAULT_CONFIG(disp, touch_get_handle());
+        esp_lv_adapter_register_touch(&touch_cfg);
     }
 
-    ESP_LOGI(TAG, "Acquiring LVGL lock...");
-    bool locked = lvgl_port_lock(5000);
-    ESP_LOGI(TAG, "Lock acquired: %d", locked);
-    if (locked) {
-        ESP_LOGI(TAG, "Creating home screen...");
+    ESP_ERROR_CHECK(esp_lv_adapter_start());
+
+    if (esp_lv_adapter_lock(-1) == ESP_OK) {
         home_screen_create();
-        ESP_LOGI(TAG, "Home screen created");
-        lvgl_port_unlock();
+        esp_lv_adapter_unlock();
     } else {
         ESP_LOGE(TAG, "Failed to acquire LVGL lock");
     }
 
-    ch422g_set(CH422G_LCD_RST | CH422G_LCD_BL | CH422G_TOUCH_RST);
     ESP_LOGI(TAG, "LVGL ready");
 }

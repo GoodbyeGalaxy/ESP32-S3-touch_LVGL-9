@@ -1,7 +1,14 @@
 #pragma once
-#include <cstdint>
 
-void ch422g_init();
-void ch422g_set(uint8_t mask);        // setzt gesamten Output (überschreibt alles)
-void ch422g_set_bits(uint8_t bits);   // setzt nur angegebene Bits (andere bleiben)
-void ch422g_clear_bits(uint8_t bits); // löscht nur angegebene Bits (andere bleiben)
+#include "driver/i2c_master.h"
+
+// I2C-Bus initialisieren + CH422G Output Enable setzen.
+// Gibt den Bus-Handle zurück, den touch.cpp für esp_lcd_new_panel_io_i2c_v2 benötigt.
+i2c_master_bus_handle_t ch422g_init();
+
+// Backlight + alle Resets freigeben (0x1E ans Data-Register)
+void ch422g_backlight_on();
+
+// GT911 Reset-Sequenz: wählt I2C-Adresse 0x5D
+// GPIO4 wird als Output für die Sequenz genutzt, danach wieder als Input freigegeben.
+void ch422g_touch_reset();
