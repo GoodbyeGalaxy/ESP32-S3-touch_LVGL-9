@@ -27,7 +27,7 @@ extern "C" void app_main()
     touch_init(i2c_bus);
     ch422g_backlight_on();
 
-    g_audio_queue = xQueueCreate(2, sizeof(AudioPacket));
+    g_audio_queue = xQueueCreate(1, sizeof(AudioPacket));
     configASSERT(g_audio_queue != nullptr);
 
     wifi_init();   // non-blocking; net_receiver starts when IP assigned

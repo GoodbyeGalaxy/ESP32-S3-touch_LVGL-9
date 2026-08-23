@@ -160,9 +160,26 @@ static void navigate_to_wf(SpectrumScreenData *d)
     lv_screen_load_anim(d->scr_waterfall, LV_SCR_LOAD_ANIM_MOVE_LEFT, 200, 0, false);
 }
 
-// Creates a fresh home screen and loads it (deletes old spectrum screens via auto_del).
+// Cleans up all spectrum resources before loading home.
+// Called from all back-button handlers — must be idempotent.
 static void navigate_back_home()
 {
+    if (s_data) {
+        // Stop timer first to prevent callbacks accessing freed data
+        if (s_data->timer) { lv_timer_delete(s_data->timer); s_data->timer = nullptr; }
+        boot_btn_deinit();
+        if (s_data->wf_buf) { heap_caps_free(s_data->wf_buf); s_data->wf_buf = nullptr; }
+
+        // Delete the two sibling screens that are NOT currently active.
+        // The active screen is deleted by lv_screen_load_anim auto_del=true.
+        lv_obj_t *active = lv_screen_active();
+        if (s_data->scr_bars      && s_data->scr_bars      != active) lv_obj_delete(s_data->scr_bars);
+        if (s_data->scr_curve     && s_data->scr_curve     != active) lv_obj_delete(s_data->scr_curve);
+        if (s_data->scr_waterfall && s_data->scr_waterfall != active) lv_obj_delete(s_data->scr_waterfall);
+
+        delete s_data;
+        s_data = nullptr;
+    }
     lv_obj_t *home = home_screen_create();
     lv_screen_load_anim(home, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 200, 0, true);
 }
@@ -561,6 +578,7 @@ static lv_obj_t *make_spectrum_screen(lv_event_cb_t back_cb,
 // IN:  e — event with user_data = SpectrumScreenData*
 static void on_bars_delete(lv_event_t *e)
 {
+    if (!s_data) return;  // already cleaned up by navigate_back_home()
     auto *d = static_cast<SpectrumScreenData*>(lv_event_get_user_data(e));
     // Only fully clean up if this is the last remaining spectrum screen
     // (curve and waterfall may still be alive during animation)

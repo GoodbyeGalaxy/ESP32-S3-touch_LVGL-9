@@ -73,10 +73,11 @@ def list_devices():
 
 def pack_packet(seq: int, peak_l: float, peak_r: float, rms_l: float, rms_r: float,
                 momentary: float, short_term: float, integrated: float,
-                gonio_l: float, gonio_r: float, bins: np.ndarray) -> bytes:
+                gonio_l: float, gonio_r: float, bins: np.ndarray,
+                fft_bins: int = BINS) -> bytes:
     """Packs one AudioPacket (1072 bytes).
 
-    bins must be a float32 array of length BINS with values in [0.0, 1.0].
+    bins must be a float32 array of length fft_bins with values in [0.0, 1.0].
     Layout: header (48 bytes) + 256 × float32 bins (1024 bytes) = 1072 bytes.
     """
     header = struct.pack(HEADER_FMT,
@@ -84,9 +85,9 @@ def pack_packet(seq: int, peak_l: float, peak_r: float, rms_l: float, rms_r: flo
         peak_l, peak_r, rms_l, rms_r,
         momentary, short_term, integrated,
         gonio_l, gonio_r,
-        BINS
+        fft_bins
     )
-    payload = bins[:BINS].astype(np.float32).tobytes()
+    payload = bins[:fft_bins].astype(np.float32).tobytes()
     assert len(header) + len(payload) == 1072, f"Packet size mismatch: {len(header) + len(payload)}"
     return header + payload
 
@@ -107,7 +108,14 @@ def main():
     parser.add_argument('--device', default=None,
                         help='Audio device name or index (use --list to see options)')
     parser.add_argument('--list',   action='store_true', help='List audio devices and exit')
+    parser.add_argument('--bins', type=int, default=256,
+                        help='FFT bins to send (default: 256; ESP32 only accepts 256)')
+    parser.add_argument('--rate', type=int, default=30,
+                        help='Packets per second (default: 30)')
     args = parser.parse_args()
+
+    if args.bins != 256:
+        print(f"Warning: ESP32 only accepts 256 bins. Sending {args.bins} may be rejected.", file=sys.stderr)
 
     if args.list:
         list_devices()
@@ -136,23 +144,26 @@ def main():
         print(f"Device '{dev_name}' has no input channels.", file=sys.stderr)
         sys.exit(1)
 
+    blocksize = SR // args.rate          # samples per callback block
+    fft_size  = 1 << (blocksize - 1).bit_length()  # next power of 2 >= blocksize
+
     print(f"Audio source : [{dev_idx}] {dev_name}  (ch={channels})")
     print(f"Sending to   : {args.host}:{args.port}")
-    print(f"FFT bins     : {BINS}  |  Rate: {SR} Hz  |  Block: {BLOCKSIZE} samples (~{BLOCKSIZE/SR*1000:.0f} ms)")
+    print(f"FFT bins     : {args.bins}  |  Rate: {SR} Hz  |  Block: {blocksize} samples (~{blocksize/SR*1000:.0f} ms)")
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     # Hanning window for FFT — reduces spectral leakage
-    window  = np.hanning(FFT_SIZE)
+    window  = np.hanning(fft_size)
     seq     = 0
     i_acc   = 1e-10   # integrated loudness accumulator
     st_acc  = 1e-10   # short-term accumulator
     m_acc   = 1e-10   # momentary accumulator
 
     # Exponential moving-average alphas (one-pole IIR per ITU-R BS.1770-4 concept)
-    ALPHA_M = 1.0 - np.exp(-BLOCKSIZE / SR / 0.4)    # τ = 400ms  (momentary)
-    ALPHA_S = 1.0 - np.exp(-BLOCKSIZE / SR / 3.0)    # τ = 3s     (short-term)
-    ALPHA_I = 1.0 - np.exp(-BLOCKSIZE / SR / 30.0)   # τ = 30s    (integrated)
+    ALPHA_M = 1.0 - np.exp(-blocksize / SR / 0.4)    # τ = 400ms  (momentary)
+    ALPHA_S = 1.0 - np.exp(-blocksize / SR / 3.0)    # τ = 3s     (short-term)
+    ALPHA_I = 1.0 - np.exp(-blocksize / SR / 30.0)   # τ = 30s    (integrated)
 
     def audio_callback(indata, frames, time_info, status):
         nonlocal seq, i_acc, st_acc, m_acc
@@ -193,14 +204,14 @@ def main():
         gonio_l = float(l[-1])
         gonio_r = float(r[-1])
 
-        # FFT — zero-pad or trim mono block to FFT_SIZE
-        block = np.zeros(FFT_SIZE, dtype=np.float64)
-        n = min(len(mono), FFT_SIZE)
+        # FFT — zero-pad or trim mono block to fft_size
+        block = np.zeros(fft_size, dtype=np.float64)
+        n = min(len(mono), fft_size)
         block[:n] = mono[:n]
         block *= window
 
-        # Positive-frequency magnitudes, take first BINS bins
-        spectrum = np.abs(np.fft.rfft(block))[:BINS]
+        # Positive-frequency magnitudes, take first args.bins bins
+        spectrum = np.abs(np.fft.rfft(block))[:args.bins]
 
         # Log-scale magnitude, normalised to [0.0, 1.0]
         spectrum = np.log1p(spectrum * 20.0)
@@ -210,13 +221,14 @@ def main():
 
         pkt = pack_packet(seq, peak_l, peak_r, rms_l, rms_r,
                           momentary, short_term, integrated,
-                          gonio_l, gonio_r, spectrum.astype(np.float32))
+                          gonio_l, gonio_r, spectrum.astype(np.float32),
+                          fft_bins=args.bins)
         sock.sendto(pkt, (args.host, args.port))
         seq += 1
 
     try:
         with sd.InputStream(device=dev_idx, channels=channels, samplerate=SR,
-                            blocksize=BLOCKSIZE, dtype='float32',
+                            blocksize=blocksize, dtype='float32',
                             callback=audio_callback):
             print("Streaming... Ctrl+C to stop.")
             while True:
