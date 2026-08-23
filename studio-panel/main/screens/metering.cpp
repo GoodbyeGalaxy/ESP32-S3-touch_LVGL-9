@@ -1,6 +1,7 @@
 #include "metering.h"
 #include "theme.h"
 #include "screens/home.h"
+#include "audio_data.h"
 #include "lvgl.h"
 #include "esp_heap_caps.h"
 #include <cmath>
@@ -481,7 +482,30 @@ static void metering_timer_cb(lv_timer_t *timer)
 {
     auto *data = static_cast<MeteringScreenData*>(lv_timer_get_user_data(timer));
     constexpr float DT = 0.033f;
-    metering_demo_tick(data->state, DT);
+
+    AudioPacket pkt;
+    if (xQueuePeek(g_audio_queue, &pkt, 0) == pdTRUE) {
+        // Real data from UDP: map fields directly onto MeteringState
+        // xQueuePeek is non-destructive — spectrum screen can read the same packet
+        data->state.peak_l     = pkt.peak_l;
+        data->state.peak_r     = pkt.peak_r;
+        data->state.rms_l      = pkt.rms_l;
+        data->state.rms_r      = pkt.rms_r;
+        data->state.momentary  = pkt.momentary;
+        data->state.short_term = pkt.short_term;
+        data->state.integrated = pkt.integrated;
+        data->state.l_sample   = pkt.gonio_l;
+        data->state.r_sample   = pkt.gonio_r;
+        data->state.history_tick += DT;
+        if (data->state.history_tick >= 1.0f) {
+            data->state.history_tick -= 1.0f;
+            data->state.short_term_history[data->state.history_head] = pkt.short_term;
+            data->state.history_head = (data->state.history_head + 1) % 60;
+        }
+    } else {
+        metering_demo_tick(data->state, DT);  // fallback when no UDP data
+    }
+
     metering_bar_update(data->bar_l, data->state.rms_l, data->state.peak_hold_l);
     metering_bar_update(data->bar_r, data->state.rms_r, data->state.peak_hold_r);
     metering_gonio_update(data->gonio, data);
