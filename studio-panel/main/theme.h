@@ -2,7 +2,7 @@
 #include "lvgl.h"
 
 // ── Farben ────────────────────────────────────────────────────
-#define THEME_BG_PRIMARY      lv_color_hex(0x606060)   // Screen-Hintergrund
+#define THEME_BG_PRIMARY      lv_color_hex(0x2A2A2A)   // Screen-Hintergrund (IPS: bei Grüntint auf 0x404040 erhöhen)
 #define THEME_BG_CARD         lv_color_hex(0x747474)   // Kacheln / Cards
 #define THEME_BG_CARD_HOVER   lv_color_hex(0x888888)   // Pressed-State
 #define THEME_ACCENT          lv_color_hex(0x3B82F6)   // Primärfarbe (Blau)
