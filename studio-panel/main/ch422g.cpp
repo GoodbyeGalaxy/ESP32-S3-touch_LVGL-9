@@ -33,8 +33,44 @@ static esp_err_t ch422g_write(i2c_master_dev_handle_t dev, uint8_t val)
 
 // ── Öffentliche API ────────────────────────────────────────────────────────
 
+void ch422g_i2c_scan(i2c_master_bus_handle_t bus)
+{
+    ESP_LOGI(TAG, "I2C scan 0x01–0x7F ...");
+    for (uint8_t addr = 0x01; addr < 0x7F; addr++) {
+        if (i2c_master_probe(bus, addr, /*timeout_ms=*/10) == ESP_OK) {
+            ESP_LOGI(TAG, "  found: 0x%02X", addr);
+        }
+    }
+    ESP_LOGI(TAG, "I2C scan done");
+}
+
 i2c_master_bus_handle_t ch422g_init()
 {
+    // ── I2C Bus Recovery: 9× SCL toggelн, befreit festgehaltene SDA ──────
+    // Standard I2C recovery sequence (NXP UM10204 §3.1.16)
+    gpio_set_direction(BSP_I2C_SCL, GPIO_MODE_OUTPUT_OD);
+    gpio_set_direction(BSP_I2C_SDA, GPIO_MODE_INPUT);
+    gpio_set_level(BSP_I2C_SCL, 1);
+    vTaskDelay(pdMS_TO_TICKS(1));
+    for (int i = 0; i < 9; i++) {
+        gpio_set_level(BSP_I2C_SCL, 0);
+        vTaskDelay(pdMS_TO_TICKS(1));
+        gpio_set_level(BSP_I2C_SCL, 1);
+        vTaskDelay(pdMS_TO_TICKS(1));
+        if (gpio_get_level(BSP_I2C_SDA)) break;  // SDA frei → Bus recovered
+    }
+    // STOP condition: SDA low → high während SCL high
+    gpio_set_direction(BSP_I2C_SDA, GPIO_MODE_OUTPUT_OD);
+    gpio_set_level(BSP_I2C_SDA, 0);
+    vTaskDelay(pdMS_TO_TICKS(1));
+    gpio_set_level(BSP_I2C_SDA, 1);
+    vTaskDelay(pdMS_TO_TICKS(5));
+    // Pins freigeben, damit I2C-Master-Treiber sie übernehmen kann
+    gpio_reset_pin(BSP_I2C_SCL);
+    gpio_reset_pin(BSP_I2C_SDA);
+    ESP_LOGI(TAG, "I2C bus recovery complete (SDA=%s)",
+             gpio_get_level(BSP_I2C_SDA) ? "high=OK" : "still-low=HW-problem");
+
     // ── I2C Bus konfigurieren ──────────────────────────────────────────────
     i2c_master_bus_config_t bus_cfg = {};
     bus_cfg.i2c_port      = BSP_I2C_PORT;

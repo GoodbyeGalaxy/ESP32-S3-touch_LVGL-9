@@ -35,7 +35,7 @@
 #define BSP_I2C_PORT  (0)
 #define BSP_I2C_SDA   GPIO_NUM_8
 #define BSP_I2C_SCL   GPIO_NUM_9
-#define BSP_I2C_FREQ  400000
+#define BSP_I2C_FREQ  100000
 
 // ── GT911 Touch ──────────────────────────────────────────────
 #define TOUCH_INT_PIN    GPIO_NUM_4
