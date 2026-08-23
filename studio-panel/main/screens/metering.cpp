@@ -238,16 +238,108 @@ static void metering_bar_update(lv_obj_t *bar, float rms_db, float peak_hold_db)
     lv_obj_invalidate(bar);
 }
 
-// Creates goniometer canvas object; needs PSRAM buffer allocation in later task
-static lv_obj_t *metering_gonio_create(lv_obj_t *parent, MeteringScreenData *)
+// clears canvas and redraws all 80 ring-buffer points; must be called from LVGL task
+static void gonio_redraw(lv_obj_t *canvas, MeteringScreenData *data)
 {
-    lv_obj_t *c = lv_obj_create(parent);
-    lv_obj_remove_style_all(c);
-    return c;
+    lv_layer_t layer;
+    lv_canvas_init_layer(canvas, &layer);
+
+    // Clear to screen background
+    {
+        lv_draw_rect_dsc_t dsc;
+        lv_draw_rect_dsc_init(&dsc);
+        dsc.bg_color = THEME_BG_PRIMARY;
+        dsc.bg_opa   = LV_OPA_COVER;
+        dsc.radius   = 0;
+        lv_area_t full = {0, 0, 249, 249};
+        lv_draw_rect(&layer, &dsc, &full);
+    }
+
+    // Center vertical reference line (mono = top-to-bottom)
+    {
+        lv_draw_line_dsc_t dsc;
+        lv_draw_line_dsc_init(&dsc);
+        dsc.color = lv_color_hex(0x808080);
+        dsc.width = 1;
+        dsc.p1.x = 125; dsc.p1.y = 15;
+        dsc.p2.x = 125; dsc.p2.y = 235;
+        lv_draw_line(&layer, &dsc);
+    }
+
+    // Draw ring buffer: oldest (dimmest) first, newest (brightest) last
+    static const lv_color_t POINT_COLORS[4] = {
+        lv_color_hex(0x687868),   // age band 0: barely visible
+        lv_color_hex(0x508050),   // age band 1: dim
+        lv_color_hex(0x409840),   // age band 2: medium
+        lv_color_hex(0x30BC30),   // age band 3: bright
+    };
+    for (int i = 0; i < 80; i++) {
+        // i=0 oldest, i=79 newest
+        int idx = (data->gonio_head + i) % 80;
+        auto &pt = data->gonio_pts[idx];
+        int band = (i * 4) / 80;  // 0..3
+
+        lv_draw_rect_dsc_t dsc;
+        lv_draw_rect_dsc_init(&dsc);
+        dsc.bg_color = POINT_COLORS[band];
+        dsc.bg_opa   = LV_OPA_COVER;
+        dsc.radius   = LV_RADIUS_CIRCLE;
+        dsc.border_width = 0;
+        lv_area_t pa = { pt.x - 2, pt.y - 2, pt.x + 2, pt.y + 2 };
+        lv_draw_rect(&layer, &dsc, &pa);
+    }
+
+    lv_canvas_finish_layer(canvas, &layer);
+    lv_obj_invalidate(canvas);
 }
 
-// Redraws goniometer from data->gonio_pts array
-static void metering_gonio_update(lv_obj_t *, MeteringScreenData *) {}
+// allocates gonio_buf from PSRAM; caller frees via data->gonio_buf in on_screen_delete
+static lv_obj_t *metering_gonio_create(lv_obj_t *parent, MeteringScreenData *data)
+{
+    // Allocate canvas buffer from PSRAM
+    constexpr int W = 250, H = 250;
+    size_t buf_size = (size_t)W * H * sizeof(uint16_t);  // RGB565 = 2 bytes/pixel
+    data->gonio_buf = heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM);
+    if (!data->gonio_buf) {
+        // Fallback to internal RAM (unlikely to fit but prevents crash)
+        data->gonio_buf = malloc(buf_size);
+    }
+    memset(data->gonio_buf, 0, buf_size);
+
+    // Initialize ring buffer to center (no signal = dot at center)
+    for (auto &p : data->gonio_pts) { p.x = 125; p.y = 125; }
+    data->gonio_head = 0;
+
+    lv_obj_t *canvas = lv_canvas_create(parent);
+    lv_canvas_set_buffer(canvas, data->gonio_buf, W, H, LV_COLOR_FORMAT_RGB565);
+
+    return canvas;
+}
+
+// adds new M/S point to ring buffer then redraws; safe in LVGL timer callback
+static void metering_gonio_update(lv_obj_t *canvas, MeteringScreenData *data)
+{
+    float l = data->state.l_sample;
+    float r = data->state.r_sample;
+
+    // Mid-Side (Lissajous rotated 45°): side=horizontal, mid=vertical
+    constexpr float SQRT2_INV = 0.7071f;
+    float mid  = (l + r) * SQRT2_INV;
+    float side = (l - r) * SQRT2_INV;
+
+    // Map ±1.0 → ±110 px from center (125, 125)
+    int16_t cx = (int16_t)(125.0f + side * 110.0f);
+    int16_t cy = (int16_t)(125.0f - mid  * 110.0f);
+    // Clamp to canvas bounds (leaving 2px margin for point radius)
+    cx = (int16_t)(cx < 15 ? 15 : cx > 235 ? 235 : cx);
+    cy = (int16_t)(cy < 15 ? 15 : cy > 235 ? 235 : cy);
+
+    // Add to ring buffer; head will point to NEXT write (= oldest after increment)
+    data->gonio_pts[data->gonio_head] = {cx, cy};
+    data->gonio_head = (data->gonio_head + 1) % 80;
+
+    gonio_redraw(canvas, data);
+}
 
 // Creates history graph (ring-buffer visualization); drawn via draw_cb
 static lv_obj_t *metering_history_create(lv_obj_t *parent, MeteringScreenData *)
@@ -321,6 +413,8 @@ lv_obj_t *metering_screen_create()
     lv_obj_set_size(data->bar_r, 90, 380);
     lv_obj_set_pos(data->bar_r, 116, 40);
     data->gonio   = metering_gonio_create(scr, data);
+    lv_obj_set_pos(data->gonio, 278, 40);
+    // size is set by lv_canvas_set_buffer (250×250)
     data->history = metering_history_create(scr, data);
     lv_obj_t *nums = metering_numerics_create(scr);
     (void)nums;
