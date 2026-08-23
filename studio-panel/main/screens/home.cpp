@@ -6,6 +6,7 @@
 #include "screens/routing.h"
 #include "screens/dev_control.h"
 #include "screens/settings.h"
+#include "screens/spectrum.h"
 #include "lvgl.h"
 
 struct TileDef {
@@ -19,7 +20,7 @@ static const TileDef TILES[6] = {
     { LV_SYMBOL_AUDIO,    "METERING",    "Pegel / RMS / LUFS",  metering_screen_create    },
     { LV_SYMBOL_PLAY,     "STUDIO ONE",  "DAW Control",         studio_one_screen_create  },
     { LV_SYMBOL_SHUFFLE,  "USB MIDI",    "CC / Nord Lead 2X",   usb_midi_screen_create    },
-    { LV_SYMBOL_SHUFFLE,  "ROUTING",     "WING Integration",    routing_screen_create     },
+    { LV_SYMBOL_BARS,     "SPECTRUM",    "FFT / Waterfall",     spectrum_screen_create    },
     { LV_SYMBOL_SETTINGS, "DEVICE CTRL", "JSON Profiles",       dev_control_screen_create },
     { LV_SYMBOL_SETTINGS, "SETTINGS",    "Config / OTA",        settings_screen_create    },
 };

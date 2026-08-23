@@ -16,6 +16,7 @@ idf_component_register(
         "screens/routing.cpp"
         "screens/dev_control.cpp"
         "screens/settings.cpp"
+        "screens/spectrum.cpp"
     INCLUDE_DIRS "."
     REQUIRES
         esp_driver_i2c
@@ -32,4 +33,5 @@ idf_component_register(
         esp_netif
         esp_event
         nvs_flash
+        esp_driver_gpio
 )
