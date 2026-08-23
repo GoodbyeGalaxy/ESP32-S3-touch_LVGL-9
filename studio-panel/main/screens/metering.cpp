@@ -341,16 +341,95 @@ static void metering_gonio_update(lv_obj_t *canvas, MeteringScreenData *data)
     gonio_redraw(canvas, data);
 }
 
-// Creates history graph (ring-buffer visualization); drawn via draw_cb
-static lv_obj_t *metering_history_create(lv_obj_t *parent, MeteringScreenData *)
+// LV_EVENT_DRAW_MAIN handler; reads state via user_data — no lock needed (LVGL task)
+static void history_draw_cb(lv_event_t *e)
 {
+    auto *data  = static_cast<MeteringScreenData*>(lv_event_get_user_data(e));
+    lv_layer_t *layer = lv_event_get_layer(e);
+    lv_obj_t   *obj   = lv_event_get_target_obj(e);
+
+    lv_area_t a;
+    lv_obj_get_coords(obj, &a);
+    int32_t w = lv_area_get_width(&a);
+    int32_t h = lv_area_get_height(&a);
+
+    // Background
+    {
+        lv_draw_rect_dsc_t dsc;
+        lv_draw_rect_dsc_init(&dsc);
+        dsc.bg_color = lv_color_hex(0x484848);
+        dsc.radius   = THEME_RADIUS;
+        lv_draw_rect(layer, &dsc, &a);
+    }
+
+    // 60 bars: left = oldest, right = newest
+    constexpr float DB_MIN   = -40.0f;
+    constexpr float DB_MAX   =  -6.0f;
+    constexpr float DB_RANGE = DB_MAX - DB_MIN;
+
+    float bar_w = (float)w / 60.0f;
+
+    for (int i = 0; i < 60; i++) {
+        int   idx = (data->state.history_head + i) % 60;  // oldest→newest
+        float val = data->state.short_term_history[idx];
+
+        float norm = (val - DB_MIN) / DB_RANGE;
+        norm = std::max(0.0f, std::min(1.0f, norm));
+        int32_t bar_h = (int32_t)(norm * (float)(h - 4));
+        if (bar_h < 1) bar_h = 1;
+
+        int32_t x0 = a.x1 + (int32_t)(i * bar_w);
+        int32_t x1 = a.x1 + (int32_t)((i + 1) * bar_w) - 1;
+
+        lv_color_t color;
+        if      (val > -16.0f) color = lv_color_hex(0xE05050);  // too loud
+        else if (val > -23.0f) color = lv_color_hex(0xC8A030);  // above target
+        else                   color = lv_color_hex(0x50A050);   // on target or below
+
+        lv_area_t ba = { x0, a.y2 - bar_h - 2, x1, a.y2 - 2 };
+        lv_draw_rect_dsc_t dsc;
+        lv_draw_rect_dsc_init(&dsc);
+        dsc.bg_color = color;
+        dsc.radius   = 0;
+        lv_draw_rect(layer, &dsc, &ba);
+    }
+
+    // Target line at -23 LKFS (EBU R128)
+    {
+        float norm_t = (-23.0f - DB_MIN) / DB_RANGE;
+        norm_t = std::max(0.0f, std::min(1.0f, norm_t));
+        int32_t target_y = a.y2 - (int32_t)(norm_t * (float)(h - 4)) - 2;
+
+        lv_draw_line_dsc_t dsc;
+        lv_draw_line_dsc_init(&dsc);
+        dsc.color = lv_color_hex(0x909090);
+        dsc.width = 1;
+        dsc.p1.x = (lv_value_precise_t)(a.x1 + 4);
+        dsc.p1.y = (lv_value_precise_t)target_y;
+        dsc.p2.x = (lv_value_precise_t)(a.x2 - 4);
+        dsc.p2.y = (lv_value_precise_t)target_y;
+        lv_draw_line(layer, &dsc);
+    }
+}
+
+// pre-fills history with -40 dBFS so graph starts clean, not with garbage
+static lv_obj_t *metering_history_create(lv_obj_t *parent, MeteringScreenData *data)
+{
+    for (auto &v : data->state.short_term_history) v = -40.0f;
+
     lv_obj_t *c = lv_obj_create(parent);
     lv_obj_remove_style_all(c);
+    lv_obj_set_style_bg_opa(c, LV_OPA_TRANSP, 0);
+    lv_obj_clear_flag(c, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(c, history_draw_cb, LV_EVENT_DRAW_MAIN, data);
     return c;
 }
 
-// Marks history widget for redraw on next LVGL cycle (idempotent if called from timer)
-static void metering_history_invalidate(lv_obj_t *) {}
+// triggers redraw; called from timer at ~30 Hz
+static void metering_history_invalidate(lv_obj_t *hist)
+{
+    lv_obj_invalidate(hist);
+}
 
 // Creates numeric readouts container; positions num_i, num_s, num_m, num_peak inside parent
 static lv_obj_t *metering_numerics_create(lv_obj_t *parent)
@@ -416,6 +495,8 @@ lv_obj_t *metering_screen_create()
     lv_obj_set_pos(data->gonio, 278, 40);
     // size is set by lv_canvas_set_buffer (250×250)
     data->history = metering_history_create(scr, data);
+    lv_obj_set_size(data->history, 358, 122);
+    lv_obj_set_pos(data->history, 224, 298);
     lv_obj_t *nums = metering_numerics_create(scr);
     (void)nums;
 
