@@ -9,11 +9,9 @@ public:
     const char *name() const override { return "DIGITAL"; }
 
 private:
-    // Goniometer ring buffer
-    struct GonioPoint { int16_t x, y; };
-    GonioPoint gonio_pts_[80];
-    int        gonio_head_ = 0;
-    void      *gonio_buf_  = nullptr;
+    // Goniometer phosphor model
+    void      *gonio_buf_    = nullptr;   // RGB565 canvas pixels (PSRAM, 250×250×2)
+    uint8_t   *brightness_   = nullptr;   // per-pixel brightness 0..255 (PSRAM, 250×250)
 
     // Bar widget data (passed as user_data to draw_cb)
     struct BarData { float rms_db; float peak_hold_db; };
@@ -48,10 +46,10 @@ private:
     void create_spec_strip(lv_obj_t *parent);
 
     void update_gonio(const MeterReadings &r);
+    void render_phosphor();
 
     // Static LVGL draw callbacks (take user_data pointer)
     static void bar_draw_cb(lv_event_t *e);
     static void history_draw_cb(lv_event_t *e);
     static void spec_strip_draw_cb(lv_event_t *e);
-    static void gonio_redraw(lv_obj_t *canvas, GonioPoint *pts, int head, void *buf);
 };

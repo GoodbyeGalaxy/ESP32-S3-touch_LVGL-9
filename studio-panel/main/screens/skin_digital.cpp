@@ -25,10 +25,8 @@ void SkinDigital::create(lv_obj_t *parent)
 
 void SkinDigital::destroy()
 {
-    if (gonio_buf_) {
-        heap_caps_free(gonio_buf_);
-        gonio_buf_ = nullptr;
-    }
+    if (gonio_buf_)  { heap_caps_free(gonio_buf_);  gonio_buf_  = nullptr; }
+    if (brightness_) { heap_caps_free(brightness_); brightness_ = nullptr; }
 }
 
 // ── SkinDigital::update ───────────────────────────────────────────────────────
@@ -170,120 +168,84 @@ void SkinDigital::create_bars(lv_obj_t *parent)
     lv_obj_set_pos(bar_r_, 116, 40);
 }
 
-// ── Goniometer ────────────────────────────────────────────────────────────────
+// ── Goniometer — Phosphor-Persistenz-Modell ──────────────────────────────────
+// brightness_[250×250]: Helligkeit pro Pixel 0..255 (Phosphor-Zustand)
+// gonio_buf_[250×250]: RGB565 Canvas (von LVGL angezeigt)
+// Pro Tick: brightness_ × 0.86 (Abklingzeit ~1.4s bei 30Hz),
+//           neuen Punkt bei voller Helligkeit setzen,
+//           dann brightness_ → RGB565 rendern.
 
-// static — redraws all ring-buffer points onto canvas using lv_canvas layer API
-void SkinDigital::gonio_redraw(lv_obj_t *canvas, GonioPoint *pts, int head, void *buf)
+void SkinDigital::render_phosphor()
 {
-    (void)buf;  // buf already set on canvas via lv_canvas_set_buffer in create_gonio
-
-    lv_layer_t layer;
-    lv_canvas_init_layer(canvas, &layer);
-
-    // Clear to screen background
-    {
-        lv_draw_rect_dsc_t dsc;
-        lv_draw_rect_dsc_init(&dsc);
-        dsc.bg_color = THEME_BG_PRIMARY;
-        dsc.bg_opa   = LV_OPA_COVER;
-        dsc.radius   = 0;
-        lv_area_t full = {0, 0, 249, 249};
-        lv_draw_rect(&layer, &dsc, &full);
+    auto *pixels = static_cast<uint16_t*>(gonio_buf_);
+    for (int i = 0; i < 250 * 250; i++) {
+        uint8_t b = brightness_[i];
+        // Phosphor-Grün: G dominant, leichter Blau-Tint
+        uint16_t g6 = (uint32_t)b * 50 >> 8;   // 0..49 (6-bit green)
+        uint16_t b5 = (uint32_t)b * 6  >> 8;   // 0..5  (5-bit blue)
+        pixels[i] = (uint16_t)((g6 << 5) | b5);
     }
-
-    // Center vertical reference line (mono = top-to-bottom)
-    {
-        lv_draw_line_dsc_t dsc;
-        lv_draw_line_dsc_init(&dsc);
-        dsc.color = lv_color_hex(0x808080);
-        dsc.width = 1;
-        dsc.p1.x = 125; dsc.p1.y = 15;
-        dsc.p2.x = 125; dsc.p2.y = 235;
-        lv_draw_line(&layer, &dsc);
+    // Zentrale Referenzlinie (Mono = vertikal): sehr dim wenn kein Signal drüber
+    for (int y = 10; y < 240; y++) {
+        int i = y * 250 + 125;
+        if (pixels[i] == 0) pixels[i] = 0x0080;  // kaum sichtbar dunkelgrün
     }
-
-    // Draw ring buffer: oldest (dimmest) first, newest (brightest) last
-    static const lv_color_t POINT_COLORS[4] = {
-        lv_color_hex(0x687868),   // age band 0: barely visible
-        lv_color_hex(0x508050),   // age band 1: dim
-        lv_color_hex(0x409840),   // age band 2: medium
-        lv_color_hex(0x30BC30),   // age band 3: bright
-    };
-    for (int i = 0; i < 80; i++) {
-        // i=0 oldest, i=79 newest
-        int idx = (head + i) % 80;
-        auto &pt = pts[idx];
-        int band = (i * 4) / 80;  // 0..3
-
-        lv_draw_rect_dsc_t dsc;
-        lv_draw_rect_dsc_init(&dsc);
-        dsc.bg_color = POINT_COLORS[band];
-        dsc.bg_opa   = LV_OPA_COVER;
-        dsc.radius   = LV_RADIUS_CIRCLE;
-        dsc.border_width = 0;
-        lv_area_t pa = { pt.x - 2, pt.y - 2, pt.x + 2, pt.y + 2 };
-        lv_draw_rect(&layer, &dsc, &pa);
-    }
-
-    lv_canvas_finish_layer(canvas, &layer);
-    lv_obj_invalidate(canvas);
+    lv_obj_invalidate(gonio_);
 }
 
 void SkinDigital::create_gonio(lv_obj_t *parent)
 {
     constexpr int W = 250, H = 250;
-    size_t buf_size = (size_t)W * H * sizeof(uint16_t);  // RGB565 = 2 bytes/pixel
-    gonio_buf_ = heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM);
-    if (!gonio_buf_) {
-        gonio_buf_ = malloc(buf_size);
-    }
-    memset(gonio_buf_, 0, buf_size);
+    constexpr size_t px_bytes  = (size_t)W * H * sizeof(uint16_t);
+    constexpr size_t bri_bytes = (size_t)W * H;
 
-    // Initialize ring buffer to center (no signal = dot at center)
-    for (auto &p : gonio_pts_) { p.x = 125; p.y = 125; }
-    gonio_head_ = 0;
+    gonio_buf_  = heap_caps_malloc(px_bytes,  MALLOC_CAP_SPIRAM);
+    brightness_ = static_cast<uint8_t*>(heap_caps_malloc(bri_bytes, MALLOC_CAP_SPIRAM));
+    if (!gonio_buf_)  gonio_buf_  = malloc(px_bytes);
+    if (!brightness_) brightness_ = static_cast<uint8_t*>(malloc(bri_bytes));
+
+    memset(brightness_, 0, bri_bytes);
+    memset(gonio_buf_,  0, px_bytes);
 
     lv_obj_t *canvas = lv_canvas_create(parent);
     lv_canvas_set_buffer(canvas, gonio_buf_, W, H, LV_COLOR_FORMAT_RGB565);
     lv_obj_set_pos(canvas, 278, 40);
     gonio_ = canvas;
+
+    render_phosphor();  // sauberer Initialzustand (schwarz, Referenzlinie)
 }
 
 void SkinDigital::update_gonio(const MeterReadings &r)
 {
-    if (r.demo_mode) {
-        // Kein Signal: alle Punkte langsam zur Mitte hin zerfallen
-        bool changed = false;
-        for (auto &p : gonio_pts_) {
-            if (p.x != 125 || p.y != 125) {
-                p.x = (int16_t)(p.x + (125 - p.x) / 4);
-                p.y = (int16_t)(p.y + (125 - p.y) / 4);
-                if (abs(p.x - 125) < 2) p.x = 125;
-                if (abs(p.y - 125) < 2) p.y = 125;
-                changed = true;
-            }
-        }
-        if (changed) gonio_redraw(gonio_, gonio_pts_, gonio_head_, gonio_buf_);
-        return;
+    // Phosphor-Abkling: ×220/256 ≈ ×0.86 → nach ~42 Ticks auf 1%
+    for (int i = 0; i < 250 * 250; i++) {
+        brightness_[i] = (uint8_t)((uint32_t)brightness_[i] * 220 >> 8);
     }
 
-    float l = r.gonio_l;
-    float rr = r.gonio_r;
+    if (!r.demo_mode) {
+        // M/S Lissajous: Mid = vertikal, Side = horizontal
+        constexpr float SQRT2_INV = 0.7071f;
+        float mid  = (r.gonio_l + r.gonio_r) * SQRT2_INV;
+        float side = (r.gonio_l - r.gonio_r) * SQRT2_INV;
 
-    // Mid-Side (Lissajous rotated 45°): side=horizontal, mid=vertical
-    constexpr float SQRT2_INV = 0.7071f;
-    float mid  = (l + rr) * SQRT2_INV;
-    float side = (l - rr) * SQRT2_INV;
+        int cx = (int)(125.5f + side * 110.0f);
+        int cy = (int)(125.5f - mid  * 110.0f);
+        cx = std::max(2, std::min(247, cx));
+        cy = std::max(2, std::min(247, cy));
 
-    int16_t cx = (int16_t)(125.0f + side * 110.0f);
-    int16_t cy = (int16_t)(125.0f - mid  * 110.0f);
-    cx = (int16_t)(cx < 15 ? 15 : cx > 235 ? 235 : cx);
-    cy = (int16_t)(cy < 15 ? 15 : cy > 235 ? 235 : cy);
+        // 3×3 Gaussian-Splat: Zentrum voll, Kreuz 70%, Ecken 40%
+        auto set = [&](int x, int y, uint8_t v) {
+            uint8_t &b = brightness_[y * 250 + x];
+            if (v > b) b = v;
+        };
+        set(cx,   cy,   255);
+        set(cx-1, cy,   180); set(cx+1, cy,   180);
+        set(cx,   cy-1, 180); set(cx,   cy+1, 180);
+        set(cx-1, cy-1, 100); set(cx+1, cy-1, 100);
+        set(cx-1, cy+1, 100); set(cx+1, cy+1, 100);
+    }
 
-    gonio_pts_[gonio_head_] = {cx, cy};
-    gonio_head_ = (gonio_head_ + 1) % 80;
-
-    gonio_redraw(gonio_, gonio_pts_, gonio_head_, gonio_buf_);
+    render_phosphor();
 }
 
 // ── History graph ─────────────────────────────────────────────────────────────
