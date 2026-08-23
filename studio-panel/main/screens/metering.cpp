@@ -10,7 +10,7 @@
 #include "esp_log.h"
 #include <memory>
 
-static const char *TAG = "metering";
+static const char *TAG __attribute__((unused)) = "metering";
 
 struct MeteringScreenData {
     MeterEngine              engine;
