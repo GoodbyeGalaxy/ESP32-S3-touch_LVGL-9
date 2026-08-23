@@ -2,7 +2,7 @@
 
 **PFLICHT beim Sessionstart:** Lies zuerst `docs/development-notes.md` — dort stehen alle kritischen Erkenntnisse aus dem Hardware-Bringup. Ohne dieses Dokument wirst du dieselben Fehler wiederholen.
 
-Phase 0+1 abgeschlossen. Nächstes Ziel: **Phase 2 (USB HID)**. Plan noch nicht erstellt.
+Phase 0+1+2+3 abgeschlossen. Nächstes Ziel: **Phase 4 (USB HID)** oder **Touch-Fix (CH422G/GT911)**.
 
 ## Kurzübersicht
 
@@ -11,20 +11,29 @@ Phase 0+1 abgeschlossen. Nächstes Ziel: **Phase 2 (USB HID)**. Plan noch nicht 
 - **Projekt:** `studio-panel/` — bitte immer von dort aus arbeiten
 - **ESP-IDF aktivieren:** `source ~/esp/esp-idf-5.5/export.sh` (oder `source ~/.bashrc`)
 - **Serial-Port:** `/dev/ttyACM0` — `newgrp dialout` falls Permission denied
+- **WiFi-Credentials:** `studio-panel/main/Kconfig.projbuild` → `idf.py menuconfig` oder direkt editieren
+- **Audio-Script:** `tools/studio-panel-sender.py --host <ESP32-IP>` (Linux + macOS)
 
-## Phase 0+1: ABGESCHLOSSEN (Stand: 2026-08-23)
+## Stand: ABGESCHLOSSEN (2026-08-23)
 
 ✅ Phase 0: Display, LVGL, Hintergrundfarbe.
 ✅ Phase 1: Home Screen (6 Kacheln 3×2, Slide-Navigation, Statusleiste auf lv_layer_top).
-🎯 Nächstes Ziel: Phase 2 — USB HID (TinyUSB, Keyboard-Shortcuts).
+✅ Phase 2: Metering Screen (L/R Balken, Goniometer/Lissajous, Loudness-History 60s EBU R128, Numerik I/S/M/Peak).
+✅ Phase 3: WiFi + UDP (30Hz, 1072 Bytes), Metering mit echten Daten, Spectrum Screen (Balken/Kurve/Wasserfall, 4 Farbpresets, BOOT-Button Navigation).
+🎯 Nächstes Ziel: Phase 4 — USB HID (TinyUSB) oder Touch-Fix.
 
-**Alle Farben ≥ 38% Luminanz** — IPS-Panel zeigt darunter grünen Tint. Statusleiste: 0x686868, BG: 0x606060, Cards: 0x747474.
+**Dev-Workaround aktiv:** `ui.cpp` bootet direkt in Metering. Für Home-Screen: `home_screen_load()` in ui.cpp wiederherstellen.
+
+**Alle Farben ≥ 38% Luminanz** — IPS-Panel zeigt darunter grünen Tint. Ausnahme: reine Visualisierungsflächen (Waterfall-Canvas, FFT-Kurve). Statusleiste: 0x686868, BG: 0x606060, Cards: 0x747474.
 
 ## Offene Probleme (Stand: 2026-08-23)
 
 1. **CH422G** antwortet nicht auf I2C (ESP_FAIL) — Backlight läuft über Hardware-Default, Touch-Reset schlägt fehl → GT911 nicht initialisiert. Diagnose braucht Logikanalysator.
 2. **GT911** Touch nicht initialisiert (hängt an CH422G-Reset)
-3. **IPS-Panel Schwarzpunkt** — Grünlicher Tint unterhalb ~38% Luminanz. Minimale Hintergrundfarbe: `0x606060`. NIEMALS `0x0A0A0A` oder ähnlich dunkle Werte.
+3. **IPS-Panel Schwarzpunkt** — Grünlicher Tint unterhalb ~38% Luminanz. Minimale Hintergrundfarbe: `0x606060`. NIEMALS `0x0A0A0A` oder ähnlich dunkle Werte (Ausnahme: reine Canvas-Flächen).
+
+## Wichtig: xQueueOverwrite braucht Queue-Länge = 1
+`g_audio_queue = xQueueCreate(1, sizeof(AudioPacket))` — NICHT 2. xQueueOverwrite() asserted bei Länge ≠ 1.
 
 ## Kritische LVGL-Regeln (hart gelernt)
 

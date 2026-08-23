@@ -103,25 +103,32 @@ works via hardware default state even when software writes fail. Touch reset
 ESP32-S3/
 ├── studio-panel/          ESP-IDF project
 │   ├── main/
-│   │   ├── main.cpp       Boot sequence
-│   │   ├── board.h        Pin definitions
-│   │   ├── display.cpp    RGB panel init
-│   │   ├── touch.cpp      GT911 init (partially working)
-│   │   ├── ch422g.cpp     I/O expander (backlight + touch reset)
-│   │   ├── ui.cpp         LVGL init + screen launch
-│   │   ├── theme.h        Colors, fonts, geometry constants
+│   │   ├── main.cpp           Boot sequence
+│   │   ├── board.h            Pin definitions
+│   │   ├── audio_data.h/cpp   Shared AudioPacket struct + FreeRTOS queue
+│   │   ├── wifi.cpp/h         WiFi station, auto-reconnect
+│   │   ├── net_receiver.cpp/h UDP task (port 4210, xQueueOverwrite)
+│   │   ├── display.cpp        RGB panel init
+│   │   ├── touch.cpp          GT911 init (not yet working — CH422G issue)
+│   │   ├── ch422g.cpp         I/O expander (backlight + touch reset)
+│   │   ├── ui.cpp             LVGL init + screen launch
+│   │   ├── theme.h            Colors, fonts, geometry constants
+│   │   ├── Kconfig.projbuild  WiFi SSID/password configuration
 │   │   └── screens/
 │   │       ├── home.cpp        6-tile home screen
 │   │       ├── statusbar.cpp   Persistent top bar on lv_layer_top
-│   │       ├── metering.cpp    Audio metering (in progress)
+│   │       ├── metering.cpp    Broadcast metering (bars/goniometer/history/numerics)
+│   │       ├── spectrum.cpp/h  Spectrum screen (bars/curve/waterfall)
 │   │       ├── studio_one.cpp  DAW control (planned)
 │   │       ├── usb_midi.cpp    USB MIDI (planned)
-│   │       ├── routing.cpp     WING integration (planned)
 │   │       ├── dev_control.cpp Device profiles (planned)
 │   │       └── settings.cpp    Configuration (planned)
+├── tools/
+│   ├── studio-panel-sender.py  Cross-platform UDP audio analysis script
+│   └── requirements.txt
 ├── docs/
-│   ├── development-notes.md   Hard-won bring-up findings
-│   └── superpowers/           Design specs and implementation plans
+│   ├── development-notes.md    Hard-won bring-up findings
+│   └── superpowers/            Design specs and implementation plans
 └── README.md
 ```
 
@@ -162,14 +169,14 @@ newgrp dialout
 |---|---|---|
 | 0 | Display, LVGL, background color | ✅ Done |
 | 1 | Home screen (6 tiles, slide navigation, statusbar on `lv_layer_top`) | ✅ Done |
-| 2 | Metering screen (bars, goniometer, loudness history, demo data) | 🔨 In progress |
-| 3 | WiFi + real audio data via UDP/OSC | Planned |
+| 2 | Metering screen (bars, goniometer, 60s loudness history EBU R128, numerics) | ✅ Done |
+| 3 | WiFi + UDP audio stream + Spectrum screen (bars / curve / waterfall) | ✅ Done |
 | 4 | USB HID (keyboard shortcuts → DAW) | Planned |
 | 5 | USB MIDI (CC/SysEx → synthesizers) | Planned |
 | 6 | Studio One WebSocket integration | Planned |
 | 7 | Behringer WING integration | Planned |
 
-### Metering Screen (Phase 2 target)
+### Metering Screen
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -185,6 +192,32 @@ newgrp dialout
 │ ◁ Home                                                          │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+Data source: `tools/studio-panel-sender.py` via WiFi/UDP (30 Hz, 1072-byte binary
+packet). Falls back to animated demo data when no UDP stream is active.
+
+### Spectrum Screen (Phase 3)
+
+Three views navigated by BOOT button (short press = next view):
+
+- **View 1 — Classic Analyzer**: 256 bars, log frequency scale (20 Hz–20 kHz),
+  amplitude gradient (dark green → yellow → red), peak-hold dots
+- **View 2 — FFT Curve**: filled area chart, blue/cyan gradient, bright top line
+- **View 3 — Waterfall**: right-to-left scrolling heatmap, 4 color presets
+  (Classic / Green / Warm / Purple) selectable via long-press context menu
+
+BOOT button long press (>1 s) freezes the display for analysis.
+
+### Companion Script
+
+```bash
+pip install sounddevice numpy
+python3 tools/studio-panel-sender.py --host <ESP32_IP>
+python3 tools/studio-panel-sender.py --list   # show audio devices
+```
+
+Cross-platform: Linux (PipeWire/PulseAudio) and macOS (CoreAudio). Auto-detects
+system monitor source (what plays through your speakers).
 
 ---
 
