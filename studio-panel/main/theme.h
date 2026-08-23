@@ -2,7 +2,9 @@
 #include "lvgl.h"
 
 // ── Farben ────────────────────────────────────────────────────
-#define THEME_BG_PRIMARY      lv_color_hex(0x2A2A2A)   // Screen-Hintergrund (IPS: bei Grüntint auf 0x404040 erhöhen)
+// Brightness 0..100 — IPS-Panel: unter ~37 zeigt Grüntint. Testen: 28→32→37
+#define THEME_BG_BRIGHTNESS   28
+#define THEME_BG_PRIMARY      lv_color_hsv_to_rgb(0, 0, THEME_BG_BRIGHTNESS)
 #define THEME_BG_CARD         lv_color_hex(0x747474)   // Kacheln / Cards
 #define THEME_BG_CARD_HOVER   lv_color_hex(0x888888)   // Pressed-State
 #define THEME_ACCENT          lv_color_hex(0x3B82F6)   // Primärfarbe (Blau)
