@@ -357,7 +357,7 @@ static void history_draw_cb(lv_event_t *e)
     {
         lv_draw_rect_dsc_t dsc;
         lv_draw_rect_dsc_init(&dsc);
-        dsc.bg_color = lv_color_hex(0x484848);
+        dsc.bg_color = lv_color_hex(0x606060);  // ≥38% luminance — IPS panel minimum
         dsc.radius   = THEME_RADIUS;
         lv_draw_rect(layer, &dsc, &a);
     }
