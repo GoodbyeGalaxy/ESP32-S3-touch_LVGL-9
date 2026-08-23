@@ -137,7 +137,86 @@ static void spectrum_ctx_menu_hide(SpectrumScreenData *d);
 
 // ── Placeholder stubs (replaced in Tasks 6-8) ────────────────────────────────
 
-static void spectrum_bars_draw(lv_event_t *) {}
+// maps screen pixel to FFT bin on log frequency scale (20Hz–20kHz)
+static int x_to_bin(int x, int w)
+{
+    constexpr float F_MIN   = 20.0f;
+    constexpr float F_MAX   = 20000.0f;
+    constexpr float NYQUIST = 22050.0f;
+    float ratio = (float)x / (float)w;
+    float freq  = F_MIN * powf(F_MAX / F_MIN, ratio);
+    int   bin   = (int)(freq / NYQUIST * 256.0f);
+    return (bin < 0) ? 0 : (bin > 255) ? 255 : bin;
+}
+
+// Interpolates between two lv_color_t values. t = 0.0..1.0.
+static lv_color_t color_lerp(lv_color_t a, lv_color_t b, float t)
+{
+    uint8_t r  = (uint8_t)(a.red   + t * ((float)b.red   - (float)a.red));
+    uint8_t g  = (uint8_t)(a.green + t * ((float)b.green - (float)a.green));
+    uint8_t bu = (uint8_t)(a.blue  + t * ((float)b.blue  - (float)a.blue));
+    return lv_color_make(r, g, bu);
+}
+
+// LV_EVENT_DRAW_MAIN; reads smoothed[] and peak_hold[] from SpectrumScreenData
+static void spectrum_bars_draw(lv_event_t *e)
+{
+    auto *d     = static_cast<SpectrumScreenData*>(lv_event_get_user_data(e));
+    auto *layer = lv_event_get_layer(e);
+    auto *obj   = lv_event_get_target_obj(e);
+    lv_area_t a;
+    lv_obj_get_coords(obj, &a);
+    int32_t w = lv_area_get_width(&a);
+    int32_t h = lv_area_get_height(&a);
+
+    // Black background (pure visualisation area — luminance rule exempt)
+    {
+        lv_draw_rect_dsc_t dsc;
+        lv_draw_rect_dsc_init(&dsc);
+        dsc.bg_color = lv_color_hex(0x0A0A0A);
+        dsc.radius   = 0;
+        lv_draw_rect(layer, &dsc, &a);
+    }
+
+    // Color stops: dark green → bright green → yellow → red (by amplitude)
+    static const lv_color_t C0 = lv_color_make(0x20, 0x50, 0x20);  // dark green  (quiet)
+    static const lv_color_t C1 = lv_color_make(0x30, 0xBC, 0x30);  // bright green
+    static const lv_color_t C2 = lv_color_make(0xC8, 0xA0, 0x30);  // yellow
+    static const lv_color_t C3 = lv_color_make(0xE0, 0x50, 0x50);  // red         (loud)
+
+    for (int x = 0; x < w; x++) {
+        int   bin   = x_to_bin(x, w);
+        float mag   = d->smoothed[bin];          // 0.0..1.0
+        int32_t bar_h = (int32_t)(mag * (float)h);
+        if (bar_h < 1) bar_h = 1;
+
+        // Bar color interpolated by magnitude
+        lv_color_t col;
+        if      (mag < 0.33f) col = color_lerp(C0, C1, mag / 0.33f);
+        else if (mag < 0.66f) col = color_lerp(C1, C2, (mag - 0.33f) / 0.33f);
+        else                  col = color_lerp(C2, C3, (mag - 0.66f) / 0.34f);
+
+        lv_area_t ba = { a.x1 + (lv_coord_t)x, a.y2 - bar_h,
+                         a.x1 + (lv_coord_t)x, a.y2 };
+        lv_draw_rect_dsc_t dsc;
+        lv_draw_rect_dsc_init(&dsc);
+        dsc.bg_color = col;
+        dsc.radius   = 0;
+        lv_draw_rect(layer, &dsc, &ba);
+
+        // Peak hold: 1px white dot
+        if (d->peak_hold[bin] > 0.01f) {
+            int32_t py = a.y2 - (int32_t)(d->peak_hold[bin] * (float)h);
+            lv_area_t pa = { a.x1 + (lv_coord_t)x, py,
+                             a.x1 + (lv_coord_t)x, py };
+            lv_draw_rect_dsc_t pdsc;
+            lv_draw_rect_dsc_init(&pdsc);
+            pdsc.bg_color = lv_color_hex(0xE8E8E8);
+            lv_draw_rect(layer, &pdsc, &pa);
+        }
+    }
+}
+
 static void spectrum_curve_draw(lv_event_t *) {}
 static void spectrum_wf_update(SpectrumScreenData *) {}
 static void spectrum_ctx_menu_show(SpectrumScreenData *) {}
