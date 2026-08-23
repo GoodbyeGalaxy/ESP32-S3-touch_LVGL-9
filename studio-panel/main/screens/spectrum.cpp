@@ -217,7 +217,73 @@ static void spectrum_bars_draw(lv_event_t *e)
     }
 }
 
-static void spectrum_curve_draw(lv_event_t *) {}
+// LV_EVENT_DRAW_MAIN; draws smoothed[] as filled area chart with blue→cyan gradient.
+// Reuses x_to_bin() from Task 6 — must remain in same translation unit.
+static void spectrum_curve_draw(lv_event_t *e)
+{
+    auto *d     = static_cast<SpectrumScreenData*>(lv_event_get_user_data(e));
+    auto *layer = lv_event_get_layer(e);
+    auto *obj   = lv_event_get_target_obj(e);
+    lv_area_t a;
+    lv_obj_get_coords(obj, &a);
+    int32_t w = lv_area_get_width(&a);
+    int32_t h = lv_area_get_height(&a);
+
+    // Very dark background — pure visualisation, luminance rule exempt
+    {
+        lv_draw_rect_dsc_t dsc;
+        lv_draw_rect_dsc_init(&dsc);
+        dsc.bg_color = lv_color_hex(0x050510);
+        dsc.radius   = 0;
+        lv_draw_rect(layer, &dsc, &a);
+    }
+
+    // Filled area: trapezoids between adjacent X columns
+    for (int x = 0; x < w - 1; x++) {
+        float mag0 = d->smoothed[x_to_bin(x,   w)];
+        float mag1 = d->smoothed[x_to_bin(x+1, w)];
+        float avg  = (mag0 + mag1) * 0.5f;
+
+        int32_t top = a.y2 - (int32_t)(std::max(mag0, mag1) * (float)h);
+        lv_area_t fa = { a.x1 + x, top, a.x1 + x + 1, a.y2 };
+
+        // Gradient: dark blue base → cyan/white at peak
+        lv_color_t col;
+        if (avg < 0.5f) {
+            col = lv_color_make(
+                (uint8_t)(0x1A * avg * 2),
+                (uint8_t)(0x3A * avg * 2),
+                (uint8_t)(0x8A + (uint8_t)(0x30 * avg * 2)));
+        } else {
+            float t = (avg - 0.5f) * 2.0f;
+            col = lv_color_make(
+                (uint8_t)(0x1A + (uint8_t)(0xD0 * t)),
+                (uint8_t)(0x3A + (uint8_t)(0x96 * t)),
+                (uint8_t)(0xBA + (uint8_t)(0x45 * t)));
+        }
+
+        lv_draw_rect_dsc_t dsc;
+        lv_draw_rect_dsc_init(&dsc);
+        dsc.bg_color = col;
+        dsc.radius   = 0;
+        lv_draw_rect(layer, &dsc, &fa);
+    }
+
+    // Bright top line (cyan)
+    {
+        lv_draw_line_dsc_t dsc;
+        lv_draw_line_dsc_init(&dsc);
+        dsc.color = lv_color_hex(0x70D0FF);
+        dsc.width = 2;
+        for (int x = 0; x < w - 1; x++) {
+            dsc.p1.x = (lv_value_precise_t)(a.x1 + x);
+            dsc.p1.y = (lv_value_precise_t)(a.y2 - (int32_t)(d->smoothed[x_to_bin(x,   w)] * (float)h));
+            dsc.p2.x = (lv_value_precise_t)(a.x1 + x + 1);
+            dsc.p2.y = (lv_value_precise_t)(a.y2 - (int32_t)(d->smoothed[x_to_bin(x+1, w)] * (float)h));
+            lv_draw_line(layer, &dsc);
+        }
+    }
+}
 static void spectrum_wf_update(SpectrumScreenData *) {}
 static void spectrum_ctx_menu_show(SpectrumScreenData *) {}
 static void spectrum_ctx_menu_hide(SpectrumScreenData *) {}
