@@ -204,17 +204,26 @@ void SkinDigital::create_bars(lv_obj_t *parent)
 void SkinDigital::render_phosphor()
 {
     auto *pixels = static_cast<uint16_t*>(gonio_buf_);
+
+    // BG = THEME_BG_PRIMARY (0x606060) in RGB565: R5=12, G6=24, B5=12 → 0x630C
+    // ≥38% Luminanz — vermeidet IPS-Panel-Grüntint auf dunklen Flächen
     for (int i = 0; i < 250 * 250; i++) {
         uint8_t b = brightness_[i];
-        // Phosphor-Grün: G dominant, leichter Blau-Tint
-        uint16_t g6 = (uint32_t)b * 50 >> 8;   // 0..49 (6-bit green)
-        uint16_t b5 = (uint32_t)b * 6  >> 8;   // 0..5  (5-bit blue)
-        pixels[i] = (uint16_t)((g6 << 5) | b5);
+        if (b == 0) {
+            pixels[i] = 0x630C;  // BG: sicheres Grau
+        } else {
+            // Phosphor: Grau (b=0) → helles Grün (b=255)
+            // R: 12→0, G: 24→56, B: 12→4
+            uint16_t r5 = (uint16_t)(12 - (uint32_t)b * 12 / 255);
+            uint16_t g6 = (uint16_t)(24 + (uint32_t)b * 32 / 255);
+            uint16_t b5 = (uint16_t)(12 - (uint32_t)b *  8 / 255);
+            pixels[i] = (uint16_t)((r5 << 11) | (g6 << 5) | b5);
+        }
     }
-    // Zentrale Referenzlinie (Mono = vertikal): sehr dim wenn kein Signal drüber
+    // Zentrale Mono-Achse: minimal heller als BG
     for (int y = 10; y < 240; y++) {
         int i = y * 250 + 125;
-        if (pixels[i] == 0) pixels[i] = 0x0080;  // kaum sichtbar dunkelgrün
+        if (brightness_[i] < 4) pixels[i] = 0x6560;  // leicht grüner als BG
     }
     lv_obj_invalidate(gonio_);
 }
