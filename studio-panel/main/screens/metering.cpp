@@ -7,6 +7,13 @@
 #include <cstring>
 #include <algorithm>
 
+// ── Per-bar draw data ─────────────────────────────────────────────────────────
+
+struct BarWidgetData {
+    float rms_db;
+    float peak_hold_db;
+};
+
 // ── Demo data state ───────────────────────────────────────────────────────────
 
 struct MeteringState {
@@ -53,13 +60,9 @@ struct MeteringScreenData {
 
     struct GonioPoint { int16_t x, y; } gonio_pts[80];
     int gonio_head;
-};
 
-// ── Per-bar draw data ─────────────────────────────────────────────────────────
-
-struct BarWidgetData {
-    float rms_db;
-    float peak_hold_db;
+    BarWidgetData bar_l_data;
+    BarWidgetData bar_r_data;
 };
 
 // ── Forward declarations ──────────────────────────────────────────────────────
@@ -149,17 +152,91 @@ static void metering_demo_tick(MeteringState &s, float dt)
     }
 }
 
-// Creates a bar widget container (stubs return placeholder obj); called from metering_screen_create()
-static lv_obj_t *metering_bar_create(lv_obj_t *parent, BarWidgetData *)
+// called by LVGL draw system; user_data is BarWidgetData*
+static void bar_draw_cb(lv_event_t *e)
+{
+    auto *d        = static_cast<BarWidgetData*>(lv_event_get_user_data(e));
+    lv_layer_t *layer = lv_event_get_layer(e);
+    lv_obj_t   *obj   = lv_event_get_target_obj(e);
+
+    lv_area_t a;
+    lv_obj_get_coords(obj, &a);
+    int32_t h = lv_area_get_height(&a);
+
+    // Background
+    {
+        lv_draw_rect_dsc_t dsc;
+        lv_draw_rect_dsc_init(&dsc);
+        dsc.bg_color = lv_color_hex(0x404040);
+        dsc.radius   = THEME_RADIUS;
+        lv_draw_rect(layer, &dsc, &a);
+    }
+
+    // dBFS → pixel y (0 dBFS = top, -60 dBFS = bottom)
+    auto db_to_y = [&](float db) -> int32_t {
+        float norm = (db + 60.0f) / 60.0f;  // 0..1
+        norm = std::max(0.0f, std::min(1.0f, norm));
+        return a.y2 - (int32_t)(norm * (float)h);
+    };
+
+    // RMS fill — three color zones
+    struct Zone { float lo, hi; uint32_t hex; };
+    static const Zone zones[] = {
+        { -60.0f, -9.0f, 0x50A050u },  // green
+        {  -9.0f, -3.0f, 0xC8A030u },  // yellow
+        {  -3.0f,  0.0f, 0xE05050u },  // red
+    };
+    float rms = d->rms_db;
+    for (auto &z : zones) {
+        if (rms <= z.lo) continue;
+        float fill_top = std::min(rms, z.hi);
+        int32_t yt = db_to_y(fill_top);
+        int32_t yb = db_to_y(z.lo);
+        if (yt >= yb) continue;
+        lv_area_t za = { a.x1 + 6, yt, a.x2 - 6, yb };
+        lv_draw_rect_dsc_t dsc;
+        lv_draw_rect_dsc_init(&dsc);
+        dsc.bg_color = lv_color_hex(z.hex);
+        dsc.radius   = 0;
+        lv_draw_rect(layer, &dsc, &za);
+    }
+
+    // Peak hold marker (white horizontal line)
+    {
+        int32_t y = db_to_y(d->peak_hold_db);
+        lv_draw_line_dsc_t dsc;
+        lv_draw_line_dsc_init(&dsc);
+        dsc.color  = lv_color_hex(0xE8E8E8);
+        dsc.width  = 2;
+        dsc.p1.x   = (lv_value_precise_t)(a.x1 + 6);
+        dsc.p1.y   = (lv_value_precise_t)y;
+        dsc.p2.x   = (lv_value_precise_t)(a.x2 - 6);
+        dsc.p2.y   = (lv_value_precise_t)y;
+        lv_draw_line(layer, &dsc);
+    }
+}
+
+// d must outlive the returned obj — stored as user_data
+static lv_obj_t *metering_bar_create(lv_obj_t *parent, BarWidgetData *d)
 {
     lv_obj_t *c = lv_obj_create(parent);
     lv_obj_remove_style_all(c);
     lv_obj_clear_flag(c, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_opa(c, LV_OPA_TRANSP, 0);
+    lv_obj_add_event_cb(c, bar_draw_cb, LV_EVENT_DRAW_MAIN, d);
+    lv_obj_set_user_data(c, d);
     return c;
 }
 
-// Updates bar widget RMS and peak-hold values; idempotent if called from timer
-static void metering_bar_update(lv_obj_t *, float, float) {}
+// safe to call from LVGL timer callback without locking
+static void metering_bar_update(lv_obj_t *bar, float rms_db, float peak_hold_db)
+{
+    auto *d = static_cast<BarWidgetData*>(lv_obj_get_user_data(bar));
+    if (!d) return;
+    d->rms_db       = rms_db;
+    d->peak_hold_db = peak_hold_db;
+    lv_obj_invalidate(bar);
+}
 
 // Creates goniometer canvas object; needs PSRAM buffer allocation in later task
 static lv_obj_t *metering_gonio_create(lv_obj_t *parent, MeteringScreenData *)
@@ -233,8 +310,16 @@ lv_obj_t *metering_screen_create()
     lv_obj_add_event_cb(scr, on_screen_delete, LV_EVENT_DELETE, data);
 
     // Widgets (positioned in Task 6; stubs return placeholder objs)
-    data->bar_l   = metering_bar_create(scr, nullptr);
-    data->bar_r   = metering_bar_create(scr, nullptr);
+    data->bar_l_data = {-60.0f, -60.0f};
+    data->bar_r_data = {-60.0f, -60.0f};
+    data->bar_l   = metering_bar_create(scr, &data->bar_l_data);
+    data->bar_r   = metering_bar_create(scr, &data->bar_r_data);
+
+    // Position bars
+    lv_obj_set_size(data->bar_l, 90, 380);
+    lv_obj_set_pos(data->bar_l, 16, 40);
+    lv_obj_set_size(data->bar_r, 90, 380);
+    lv_obj_set_pos(data->bar_r, 116, 40);
     data->gonio   = metering_gonio_create(scr, data);
     data->history = metering_history_create(scr, data);
     lv_obj_t *nums = metering_numerics_create(scr);
