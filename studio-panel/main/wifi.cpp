@@ -13,11 +13,15 @@
 static const char *TAG = "wifi";
 static std::atomic<bool> s_connected{false};
 
-// lv_async_call callback — runs in LVGL task, safe to touch widgets.
-// arg encodes state: (void*)1 = connected, nullptr = disconnected.
+// Carries IP string for connected state; heap-allocated, freed after use.
 static void wifi_statusbar_async(void *arg)
 {
-    statusbar_update_wifi(arg != nullptr);
+    if (arg) {
+        statusbar_update_wifi(true, static_cast<const char*>(arg));
+        free(arg);
+    } else {
+        statusbar_update_wifi(false);
+    }
 }
 
 // Handles both WIFI_EVENT (disconnect) and IP_EVENT (got-IP) in a single callback.
@@ -28,14 +32,17 @@ static void wifi_event_handler(void *arg, esp_event_base_t base,
 {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         s_connected = false;
-        lv_async_call(wifi_statusbar_async, nullptr);
+        lv_async_call(wifi_statusbar_async, nullptr);  // nullptr = disconnected
         ESP_LOGW(TAG, "Disconnected — reconnecting");
         esp_wifi_connect();
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         s_connected = true;
-        lv_async_call(wifi_statusbar_async, (void*)1);
         auto *event = static_cast<ip_event_got_ip_t*>(data);
         ESP_LOGI(TAG, "IP: " IPSTR, IP2STR(&event->ip_info.ip));
+        // Heap-alloc IP string — freed in wifi_statusbar_async after display
+        char *ip_buf = static_cast<char*>(malloc(16));
+        if (ip_buf) snprintf(ip_buf, 16, IPSTR, IP2STR(&event->ip_info.ip));
+        lv_async_call(wifi_statusbar_async, ip_buf);
         net_receiver_start();  // safe to call multiple times — idempotent
     }
 }

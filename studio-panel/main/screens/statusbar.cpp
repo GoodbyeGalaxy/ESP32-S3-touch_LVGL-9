@@ -54,11 +54,16 @@ void statusbar_init()
     lv_obj_align(s_wifi, LV_ALIGN_RIGHT_MID, -50, 0);
 }
 
-void statusbar_update_wifi(bool connected)
+void statusbar_update_wifi(bool connected, const char *ip_str)
 {
     if (!s_wifi) return;
     lv_obj_set_style_text_color(s_wifi,
         connected ? THEME_ACCENT : THEME_TEXT_HINT, 0);
+    if (connected && ip_str) {
+        lv_label_set_text_fmt(s_wifi, LV_SYMBOL_WIFI " %s", ip_str);
+    } else if (!connected) {
+        lv_label_set_text(s_wifi, LV_SYMBOL_WIFI);
+    }
 }
 
 void statusbar_update_time(const char *time_str)

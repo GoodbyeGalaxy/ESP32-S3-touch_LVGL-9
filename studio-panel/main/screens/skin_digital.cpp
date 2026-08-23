@@ -200,9 +200,12 @@ void SkinDigital::create_gonio(lv_obj_t *parent)
     constexpr size_t bri_bytes = (size_t)W * H;
 
     gonio_buf_  = heap_caps_malloc(px_bytes,  MALLOC_CAP_SPIRAM);
-    brightness_ = static_cast<uint8_t*>(heap_caps_malloc(bri_bytes, MALLOC_CAP_SPIRAM));
     if (!gonio_buf_)  gonio_buf_  = malloc(px_bytes);
-    if (!brightness_) brightness_ = static_cast<uint8_t*>(malloc(bri_bytes));
+    // brightness_ in DRAM: Decay-Loop konkurriert sonst mit LCD-DMA um PSRAM-Bandwidth
+    brightness_ = static_cast<uint8_t*>(
+        heap_caps_malloc(bri_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    if (!brightness_)  // DRAM voll → Fallback PSRAM
+        brightness_ = static_cast<uint8_t*>(heap_caps_malloc(bri_bytes, MALLOC_CAP_SPIRAM));
 
     memset(brightness_, 0, bri_bytes);
     memset(gonio_buf_,  0, px_bytes);
