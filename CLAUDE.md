@@ -28,6 +28,8 @@ Phase 0+1+2+3+4(Metering Pro) abgeschlossen. Nächstes Ziel: **Phase 5 (USB HID)
 
 **Dev-Workaround aktiv:** `ui.cpp` bootet direkt in Metering. Für Home-Screen: `home_screen_load()` in ui.cpp wiederherstellen.
 
+**Hintergrund-Tuning:** `THEME_BG_BRIGHTNESS`, `THEME_BG_SAT`, `THEME_BG_HUE` in `theme.h` — aktuell H=300/S=30/V=28 (Magenta-Kompensation für IPS-Grüntint). Bei zu viel Grün: SAT erhöhen oder V auf 35+ anheben.
+
 **Alle Farben ≥ 38% Luminanz** — IPS-Panel zeigt darunter grünen Tint. Ausnahme: reine Visualisierungsflächen (Waterfall-Canvas, FFT-Kurve). Statusleiste: 0x686868, BG: 0x606060, Cards: 0x747474.
 
 ## Offene Probleme (Stand: 2026-08-23)
