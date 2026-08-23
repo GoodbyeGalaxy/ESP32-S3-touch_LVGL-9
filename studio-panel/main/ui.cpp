@@ -3,6 +3,7 @@
 #include "display.h"
 #include "touch.h"
 #include "screens/home.h"
+#include "screens/metering.h"
 #include "screens/statusbar.h"
 #include "esp_lv_adapter.h"
 #include "lvgl.h"
@@ -45,7 +46,7 @@ void ui_init()
 
     if (esp_lv_adapter_lock(-1) == ESP_OK) {
         statusbar_init();
-        home_screen_load();
+        lv_screen_load(metering_screen_create());  // DEV: direkt in Metering booten (kein Touch)
         esp_lv_adapter_unlock();
     } else {
         ESP_LOGE(TAG, "Failed to acquire LVGL lock");
