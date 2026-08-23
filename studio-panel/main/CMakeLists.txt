@@ -7,6 +7,7 @@ idf_component_register(
         "touch.cpp"
         "ui.cpp"
         "wifi.cpp"
+        "net_receiver.cpp"
         "screens/home.cpp"
         "screens/statusbar.cpp"
         "screens/metering.cpp"

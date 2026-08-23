@@ -1,4 +1,5 @@
 #include "wifi.h"
+#include "net_receiver.h"
 #include "screens/statusbar.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
@@ -7,9 +8,6 @@
 #include "nvs_flash.h"
 #include <atomic>
 #include <cstring>
-
-// Local stub — replaced by real forward decl when Task 3 adds net_receiver.h
-static void net_receiver_start() {}
 
 static const char *TAG = "wifi";
 static std::atomic<bool> s_connected{false};
