@@ -2,6 +2,7 @@
 #include "theme.h"
 #include "lvgl.h"
 #include "esp_heap_caps.h"
+#include "esp_log.h"
 #include <cmath>
 #include <cstring>
 #include <algorithm>
