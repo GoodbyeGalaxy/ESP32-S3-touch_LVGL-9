@@ -14,7 +14,7 @@ void statusbar_init()
     s_bar = lv_obj_create(top);
     lv_obj_set_size(s_bar, LV_HOR_RES, THEME_STATUSBAR_H);
     lv_obj_set_pos(s_bar, 0, 0);
-    lv_obj_set_style_bg_color(s_bar, lv_color_hex(0x555555), 0);
+    lv_obj_set_style_bg_color(s_bar, lv_color_hex(0x686868), 0);  // ≥38% Luminanz für IPS-Panel
     lv_obj_set_style_bg_opa(s_bar, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(s_bar, 0, 0);
     lv_obj_set_style_pad_all(s_bar, 0, 0);
