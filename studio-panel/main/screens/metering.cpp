@@ -74,7 +74,7 @@ static lv_obj_t *metering_gonio_create(lv_obj_t *parent, MeteringScreenData *dat
 static void      metering_gonio_update(lv_obj_t *canvas, MeteringScreenData *data);
 static lv_obj_t *metering_history_create(lv_obj_t *parent, MeteringScreenData *data);
 static void      metering_history_invalidate(lv_obj_t *hist);
-static lv_obj_t *metering_numerics_create(lv_obj_t *parent);
+static lv_obj_t *metering_numerics_create(lv_obj_t *parent, MeteringScreenData *data);
 static void      metering_numerics_update(MeteringScreenData *data);
 static void      metering_timer_cb(lv_timer_t *timer);
 static void      on_screen_delete(lv_event_t *e);
@@ -431,14 +431,48 @@ static void metering_history_invalidate(lv_obj_t *hist)
     lv_obj_invalidate(hist);
 }
 
-// Creates numeric readouts container; positions num_i, num_s, num_m, num_peak inside parent
-static lv_obj_t *metering_numerics_create(lv_obj_t *parent)
+// stores label pointers in data->num_*; panel is transparent, no border
+static lv_obj_t *metering_numerics_create(lv_obj_t *parent, MeteringScreenData *data)
 {
-    return lv_obj_create(parent);
+    lv_obj_t *panel = lv_obj_create(parent);
+    lv_obj_remove_style_all(panel);
+    lv_obj_set_style_bg_opa(panel, LV_OPA_TRANSP, 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+
+    auto make_label = [&](int y_offset) -> lv_obj_t* {
+        lv_obj_t *lbl = lv_label_create(panel);
+        lv_obj_set_style_text_color(lbl, THEME_TEXT_PRIMARY, 0);
+        lv_obj_set_style_text_font(lbl, THEME_FONT_HINT, 0);
+        lv_obj_set_pos(lbl, 0, y_offset);
+        return lbl;
+    };
+
+    data->num_i    = make_label(0);
+    data->num_s    = make_label(24);
+    data->num_m    = make_label(48);
+    data->num_peak = make_label(72);
+
+    lv_label_set_text(data->num_i,    "I:    --- LKFS");
+    lv_label_set_text(data->num_s,    "S:    --- LKFS");
+    lv_label_set_text(data->num_m,    "M:    --- LKFS");
+    lv_label_set_text(data->num_peak, "Peak: --- dBFS");
+
+    return panel;
 }
 
-// Updates all numeric readouts from metering state; called from timer
-static void metering_numerics_update(MeteringScreenData *) {}
+// safe from LVGL timer; peak label turns red above -3 dBFS
+static void metering_numerics_update(MeteringScreenData *data)
+{
+    lv_label_set_text_fmt(data->num_i,    "I:    %+.1f LKFS", data->state.integrated);
+    lv_label_set_text_fmt(data->num_s,    "S:    %+.1f LKFS", data->state.short_term);
+    lv_label_set_text_fmt(data->num_m,    "M:    %+.1f LKFS", data->state.momentary);
+
+    float peak = std::max(data->state.peak_hold_l, data->state.peak_hold_r);
+    lv_label_set_text_fmt(data->num_peak, "Peak: %+.1f dBFS", peak);
+
+    lv_color_t peak_color = (peak > -3.0f) ? lv_color_hex(0xE05050) : THEME_TEXT_PRIMARY;
+    lv_obj_set_style_text_color(data->num_peak, peak_color, 0);
+}
 
 // ── Timer + screen lifecycle ──────────────────────────────────────────────────
 
@@ -497,8 +531,9 @@ lv_obj_t *metering_screen_create()
     data->history = metering_history_create(scr, data);
     lv_obj_set_size(data->history, 358, 122);
     lv_obj_set_pos(data->history, 224, 298);
-    lv_obj_t *nums = metering_numerics_create(scr);
-    (void)nums;
+    lv_obj_t *nums = metering_numerics_create(scr, data);
+    lv_obj_set_size(nums, 194, 110);
+    lv_obj_set_pos(nums, 590, 48);
 
     // Back button
     lv_obj_t *btn = lv_btn_create(scr);
