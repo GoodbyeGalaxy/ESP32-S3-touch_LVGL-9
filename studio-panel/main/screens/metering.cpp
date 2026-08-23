@@ -79,8 +79,75 @@ static void      on_back(lv_event_t *e);
 
 // ── Stub implementations (filled in later tasks) ──────────────────────────────
 
-// Advances demo state by dt (seconds) — creates demo audio samples and metering state
-static void metering_demo_tick(MeteringState &, float) {}
+// dt in seconds; called at ~30 Hz from LVGL task — all math must be fast (no heavy trig loops)
+static void metering_demo_tick(MeteringState &s, float dt)
+{
+    // Time + slowly drifting stereo phase offset
+    s.time         += dt;
+    s.phase_offset += 0.25f * dt;  // full rotation every ~25 s
+
+    // Slow amplitude envelope: 0.15 .. 0.85 at 0.08 Hz
+    s.envelope = 0.5f + 0.35f * sinf(2.0f * M_PI * 0.08f * s.time);
+
+    // L/R samples
+    s.l_sample = s.envelope * sinf(2.0f * M_PI * 0.7f * s.time);
+    s.r_sample = s.envelope * sinf(2.0f * M_PI * 0.7f * s.time + s.phase_offset);
+
+    // dBFS helper (returns -60.0 for near-silence)
+    auto to_db = [](float v) -> float {
+        float a = fabsf(v);
+        if (a < 1e-6f) return -60.0f;
+        return std::max(20.0f * log10f(a), -60.0f);
+    };
+
+    float db_l = to_db(s.l_sample);
+    float db_r = to_db(s.r_sample);
+
+    // Peak: fast attack, 30 dB/s decay
+    constexpr float PEAK_DECAY = 30.0f;
+    s.peak_l = std::max(db_l, s.peak_l - PEAK_DECAY * dt);
+    s.peak_r = std::max(db_r, s.peak_r - PEAK_DECAY * dt);
+
+    // Peak hold: 3 s freeze, then same decay
+    auto update_hold = [&](float peak, float &hold, float &timer) {
+        if (peak >= hold) { hold = peak; timer = 3.0f; }
+        else if (timer > 0.0f) timer -= dt;
+        else hold = std::max(hold - PEAK_DECAY * dt, -60.0f);
+    };
+    update_hold(s.peak_l, s.peak_hold_l, s.peak_hold_timer);
+    update_hold(s.peak_r, s.peak_hold_r, s.peak_hold_timer);  // shared timer OK for demo
+
+    // RMS: exponential MA, τ = 300 ms
+    float alpha_rms = 1.0f - expf(-dt / 0.30f);
+    s.rms_sq_l += alpha_rms * (s.l_sample * s.l_sample - s.rms_sq_l);
+    s.rms_sq_r += alpha_rms * (s.r_sample * s.r_sample - s.rms_sq_r);
+    s.rms_l = to_db(sqrtf(std::max(s.rms_sq_l, 0.0f)));
+    s.rms_r = to_db(sqrtf(std::max(s.rms_sq_r, 0.0f)));
+
+    // Momentary (τ = 400 ms), Short-term (τ = 3 s), Integrated (τ = 30 s)
+    float power = 0.5f * (s.l_sample * s.l_sample + s.r_sample * s.r_sample);
+    float alpha_m = 1.0f - expf(-dt / 0.40f);
+    float alpha_s = 1.0f - expf(-dt / 3.00f);
+    float alpha_i = 1.0f - expf(-dt / 30.0f);
+
+    // Target integrated around -14 LKFS power ≈ 0.0158
+    constexpr float I_TARGET_POWER = 0.0158f;
+    s.m_acc += alpha_m * (power         - s.m_acc);
+    s.s_acc += alpha_s * (power         - s.s_acc);
+    s.i_acc += alpha_i * (I_TARGET_POWER - s.i_acc);  // pulls toward -14 LKFS
+
+    s.momentary  = to_db(sqrtf(std::max(s.m_acc, 1e-12f)));
+    s.short_term = to_db(sqrtf(std::max(s.s_acc, 1e-12f)));
+    s.integrated = to_db(sqrtf(std::max(s.i_acc, 1e-12f)));
+
+    // History: 1 short-term value per second
+    s.history_tick += dt;
+    if (s.history_tick >= 1.0f) {
+        s.history_tick -= 1.0f;
+        s.short_term_history[s.history_head] = s.short_term;
+        s.history_head = (s.history_head + 1) % 60;
+    }
+}
 
 // Creates a bar widget container (stubs return placeholder obj); called from metering_screen_create()
 static lv_obj_t *metering_bar_create(lv_obj_t *parent, BarWidgetData *)
