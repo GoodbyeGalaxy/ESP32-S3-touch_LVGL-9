@@ -28,8 +28,8 @@
 // Montserrat für Titel (geschwungen, groß — kein Bleeding bei 24px)
 // unscii_16 für Labels/Hints — pixel-perfekt, kein Anti-Aliasing-Bleeding
 #define THEME_FONT_TITLE      (&lv_font_montserrat_24)
-#define THEME_FONT_LABEL      (&lv_font_unscii_16)
-#define THEME_FONT_HINT       (&lv_font_unscii_8)
+#define THEME_FONT_LABEL      (&lv_font_montserrat_16)
+#define THEME_FONT_HINT       (&lv_font_montserrat_16)
 
 // ── Helper: neuen Screen mit Dark-Background erstellen ────────
 // Gibt IMMER lv_obj_create(nullptr) zurück — nie lv_screen_active() verwenden.

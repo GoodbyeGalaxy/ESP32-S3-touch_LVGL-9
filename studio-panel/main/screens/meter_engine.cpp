@@ -38,8 +38,10 @@ const MeterReadings &MeterEngine::tick(float dt)
 {
     AudioPacket pkt;
     if (xQueuePeek(g_audio_queue, &pkt, 0) == pdTRUE) {
+        r_.demo_mode = false;
         tick_real(pkt, dt);
     } else {
+        r_.demo_mode = true;
         tick_demo(dt);
     }
     update_ballistics(dt);
@@ -73,7 +75,8 @@ void MeterEngine::tick_demo(float dt)
 {
     demo_time_  += dt;
     demo_phase_ += 0.25f * dt;
-    demo_env_ = 0.5f + 0.35f * sinf(2.0f * M_PI * 0.08f * demo_time_);
+    // Demo: sehr leises Rauschen (~-40 dBFS) damit Meter nicht täuscht
+    demo_env_ = 0.008f + 0.002f * sinf(2.0f * M_PI * 0.08f * demo_time_);
 
     float l = demo_env_ * sinf(2.0f * M_PI * 0.7f * demo_time_);
     float r = demo_env_ * sinf(2.0f * M_PI * 0.7f * demo_time_ + demo_phase_);

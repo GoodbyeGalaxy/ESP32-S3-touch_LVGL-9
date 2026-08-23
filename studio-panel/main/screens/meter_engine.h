@@ -28,6 +28,8 @@ struct MeterReadings {
     float  short_term_history[60];
     int    history_head;           // next write index
     float  history_tick;           // accumulator toward 1.0s
+
+    bool   demo_mode;              // true = no UDP data, demo fallback active
 };
 
 class MeterEngine {

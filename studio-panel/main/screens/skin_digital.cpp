@@ -251,6 +251,22 @@ void SkinDigital::create_gonio(lv_obj_t *parent)
 
 void SkinDigital::update_gonio(const MeterReadings &r)
 {
+    if (r.demo_mode) {
+        // Kein Signal: alle Punkte langsam zur Mitte hin zerfallen
+        bool changed = false;
+        for (auto &p : gonio_pts_) {
+            if (p.x != 125 || p.y != 125) {
+                p.x = (int16_t)(p.x + (125 - p.x) / 4);
+                p.y = (int16_t)(p.y + (125 - p.y) / 4);
+                if (abs(p.x - 125) < 2) p.x = 125;
+                if (abs(p.y - 125) < 2) p.y = 125;
+                changed = true;
+            }
+        }
+        if (changed) gonio_redraw(gonio_, gonio_pts_, gonio_head_, gonio_buf_);
+        return;
+    }
+
     float l = r.gonio_l;
     float rr = r.gonio_r;
 
@@ -259,14 +275,11 @@ void SkinDigital::update_gonio(const MeterReadings &r)
     float mid  = (l + rr) * SQRT2_INV;
     float side = (l - rr) * SQRT2_INV;
 
-    // Map ±1.0 → ±110 px from center (125, 125)
     int16_t cx = (int16_t)(125.0f + side * 110.0f);
     int16_t cy = (int16_t)(125.0f - mid  * 110.0f);
-    // Clamp to canvas bounds (leaving 15px margin for point radius)
     cx = (int16_t)(cx < 15 ? 15 : cx > 235 ? 235 : cx);
     cy = (int16_t)(cy < 15 ? 15 : cy > 235 ? 235 : cy);
 
-    // Add to ring buffer; head will point to NEXT write (= oldest after increment)
     gonio_pts_[gonio_head_] = {cx, cy};
     gonio_head_ = (gonio_head_ + 1) % 80;
 
@@ -381,9 +394,9 @@ void SkinDigital::create_numerics(lv_obj_t *parent)
     };
 
     num_i_    = make_label(0);
-    num_s_    = make_label(24);
-    num_m_    = make_label(48);
-    num_peak_ = make_label(72);
+    num_s_    = make_label(26);
+    num_m_    = make_label(52);
+    num_peak_ = make_label(78);
 
     lv_label_set_text(num_i_,    "I:    --- LKFS");
     lv_label_set_text(num_s_,    "S:    --- LKFS");
