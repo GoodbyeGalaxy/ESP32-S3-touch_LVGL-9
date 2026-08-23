@@ -50,7 +50,7 @@ void statusbar_init()
     // WiFi-Status
     s_wifi = lv_label_create(s_bar);
     lv_label_set_text(s_wifi, LV_SYMBOL_WIFI);
-    lv_obj_set_style_text_color(s_wifi, THEME_TEXT_HINT, 0);
+    lv_obj_set_style_text_color(s_wifi, THEME_TEXT_SECONDARY, 0);
     lv_obj_align(s_wifi, LV_ALIGN_RIGHT_MID, -50, 0);
 }
 
