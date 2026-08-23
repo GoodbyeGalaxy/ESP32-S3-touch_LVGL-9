@@ -6,6 +6,7 @@ idf_component_register(
         "touch.cpp"
         "ui.cpp"
         "screens/home.cpp"
+        "screens/statusbar.cpp"
     INCLUDE_DIRS "."
     REQUIRES
         esp_driver_i2c

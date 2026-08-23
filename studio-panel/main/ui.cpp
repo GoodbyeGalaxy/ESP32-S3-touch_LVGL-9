@@ -3,6 +3,7 @@
 #include "display.h"
 #include "touch.h"
 #include "screens/home.h"
+#include "screens/statusbar.h"
 #include "esp_lv_adapter.h"
 #include "lvgl.h"
 #include "esp_log.h"
@@ -43,6 +44,7 @@ void ui_init()
     ESP_ERROR_CHECK(esp_lv_adapter_start());
 
     if (esp_lv_adapter_lock(-1) == ESP_OK) {
+        statusbar_init();
         home_screen_create();
         esp_lv_adapter_unlock();
     } else {
