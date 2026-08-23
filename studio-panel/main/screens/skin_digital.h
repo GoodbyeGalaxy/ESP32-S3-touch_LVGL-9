@@ -3,12 +3,19 @@
 
 class SkinDigital final : public MeterSkin {
 public:
+    enum class DigitalMode : uint8_t { DBFS=0, VU=1, PPM_I=2, PPM_II=3, COUNT=4 };
+
     void create(lv_obj_t *parent) override;
     void update(const MeterReadings &r) override;
     void destroy() override;
     const char *name() const override { return "DIGITAL"; }
 
+    void        setMode(DigitalMode m);
+    DigitalMode mode() const { return mode_; }
+
 private:
+    DigitalMode  mode_     = DigitalMode::DBFS;
+    lv_obj_t    *mode_lbl_ = nullptr;  // shows "dBFS" / "VU" / "PPM I" / "PPM II"
     // Goniometer phosphor model
     void      *gonio_buf_    = nullptr;   // RGB565 canvas pixels (PSRAM, 250×250×2)
     uint8_t   *brightness_   = nullptr;   // per-pixel brightness 0..255 (DRAM preferred)

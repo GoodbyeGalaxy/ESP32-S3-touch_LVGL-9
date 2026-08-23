@@ -20,6 +20,13 @@ void SkinDigital::create(lv_obj_t *parent)
     create_numerics(parent);
     create_scale(parent);
     create_spec_strip(parent);
+
+    mode_lbl_ = lv_label_create(parent);
+    lv_obj_remove_style_all(mode_lbl_);
+    lv_obj_set_style_text_font(mode_lbl_, THEME_FONT_HINT, 0);
+    lv_obj_set_style_text_color(mode_lbl_, lv_color_hex(0xA0A0A0), 0);
+    lv_obj_set_pos(mode_lbl_, 590, 168);
+    lv_label_set_text(mode_lbl_, "MODE: dBFS");
 }
 
 // ── SkinDigital::destroy ──────────────────────────────────────────────────────
@@ -30,16 +37,34 @@ void SkinDigital::destroy()
     if (brightness_) { heap_caps_free(brightness_); brightness_ = nullptr; }
 }
 
+// ── SkinDigital::setMode ─────────────────────────────────────────────────────
+
+void SkinDigital::setMode(DigitalMode m)
+{
+    mode_ = m;
+    static const char *NAMES[] = {"dBFS", "VU", "PPM I", "PPM II"};
+    lv_label_set_text_fmt(mode_lbl_, "MODE: %s",
+                          NAMES[static_cast<uint8_t>(m)]);
+}
+
 // ── SkinDigital::update ───────────────────────────────────────────────────────
 
 void SkinDigital::update(const MeterReadings &r)
 {
-    // Bars
-    bar_l_data_.rms_db       = r.rms_l;
+    // Bars — mode-selected ballistic value
+    float bar_l, bar_r;
+    switch (mode_) {
+        case DigitalMode::VU:     bar_l = r.vu_l;     bar_r = r.vu_r;     break;
+        case DigitalMode::PPM_I:  bar_l = r.ppm_i_l;  bar_r = r.ppm_i_r;  break;
+        case DigitalMode::PPM_II: bar_l = r.ppm_ii_l; bar_r = r.ppm_ii_r; break;
+        default:                  bar_l = r.peak_l;   bar_r = r.peak_r;   break;
+    }
+
+    bar_l_data_.rms_db       = bar_l;
     bar_l_data_.peak_hold_db = r.peak_hold_l;
     lv_obj_invalidate(bar_l_);
 
-    bar_r_data_.rms_db       = r.rms_r;
+    bar_r_data_.rms_db       = bar_r;
     bar_r_data_.peak_hold_db = r.peak_hold_r;
     lv_obj_invalidate(bar_r_);
 

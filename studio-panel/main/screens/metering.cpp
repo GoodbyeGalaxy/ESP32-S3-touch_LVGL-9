@@ -56,8 +56,12 @@ static void metering_timer_cb(lv_timer_t *timer)
     if (d->btn_event) {
         d->btn_event = false;
         if (!d->btn_long) {
-            // Placeholder: only SkinDigital exists now; future skins added here
-            ESP_LOGI(TAG, "BOOT short — skin cycle (only one skin for now)");
+            auto *sd = static_cast<SkinDigital*>(d->skin.get());
+            auto next = static_cast<SkinDigital::DigitalMode>(
+                (static_cast<uint8_t>(sd->mode()) + 1) %
+                static_cast<uint8_t>(SkinDigital::DigitalMode::COUNT));
+            sd->setMode(next);
+            d->engine.reset();  // clear ballistic history on mode change
         }
         d->btn_long = false;
     }
