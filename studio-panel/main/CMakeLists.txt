@@ -7,6 +7,12 @@ idf_component_register(
         "ui.cpp"
         "screens/home.cpp"
         "screens/statusbar.cpp"
+        "screens/metering.cpp"
+        "screens/studio_one.cpp"
+        "screens/usb_midi.cpp"
+        "screens/routing.cpp"
+        "screens/dev_control.cpp"
+        "screens/settings.cpp"
     INCLUDE_DIRS "."
     REQUIRES
         esp_driver_i2c
