@@ -14,7 +14,7 @@ static const char *TAG = "main";
 
 extern "C" void app_main()
 {
-    ESP_LOGI(TAG, "Studio Panel booting...");
+    ESP_LOGI(TAG, "Studio Panel booting... APP_BUILD=" __DATE__ " " __TIME__);
 
     uint8_t num_fbs = esp_lv_adapter_get_required_frame_buffer_count(
         ESP_LV_ADAPTER_TEAR_AVOID_MODE_TRIPLE_PARTIAL,
@@ -22,6 +22,7 @@ extern "C" void app_main()
     ESP_LOGI(TAG, "esp_lvgl_adapter requires %u frame buffer(s)", num_fbs);
 
     i2c_master_bus_handle_t i2c_bus = ch422g_init();
+    ch422g_i2c_scan(i2c_bus);
     display_init(num_fbs);
     ch422g_touch_reset();
     touch_init(i2c_bus);
