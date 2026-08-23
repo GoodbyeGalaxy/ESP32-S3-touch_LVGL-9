@@ -8,6 +8,7 @@
 #include "ui.h"
 #include "esp_lv_adapter.h"
 #include "audio_data.h"
+#include "wifi.h"
 
 static const char *TAG = "main";
 
@@ -29,6 +30,7 @@ extern "C" void app_main()
     g_audio_queue = xQueueCreate(2, sizeof(AudioPacket));
     configASSERT(g_audio_queue != nullptr);
 
+    wifi_init();   // non-blocking; net_receiver starts when IP assigned
     ui_init();
 
     ESP_LOGI(TAG, "Boot complete.");

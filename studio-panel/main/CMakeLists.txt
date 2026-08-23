@@ -6,6 +6,7 @@ idf_component_register(
         "display.cpp"
         "touch.cpp"
         "ui.cpp"
+        "wifi.cpp"
         "screens/home.cpp"
         "screens/statusbar.cpp"
         "screens/metering.cpp"
@@ -26,4 +27,8 @@ idf_component_register(
         driver
         freertos
         log
+        esp_wifi
+        esp_netif
+        esp_event
+        nvs_flash
 )
