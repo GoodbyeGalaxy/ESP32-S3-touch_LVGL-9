@@ -4,7 +4,7 @@
 // ── Farben ────────────────────────────────────────────────────
 // IPS-Panel kompensieren: H=300 (Magenta) neutralisiert Grüntint, S=Stärke, V=Helligkeit
 #define THEME_BG_HUE        300   // 300=Magenta gegen Grüntint, 0=neutrales Grau
-#define THEME_BG_SAT        12    // Sättigung Tint 0..20 (höher = mehr Magenta)
+#define THEME_BG_SAT        30    // Sättigung Tint 0..30 (höher = mehr Magenta)
 #define THEME_BG_BRIGHTNESS 28    // Helligkeit 0..100
 #define THEME_BG_PRIMARY    lv_color_hsv_to_rgb(THEME_BG_HUE, THEME_BG_SAT, THEME_BG_BRIGHTNESS)
 #define THEME_BG_CARD         lv_color_hex(0x747474)   // Kacheln / Cards
