@@ -2,7 +2,7 @@
 
 **PFLICHT beim Sessionstart:** Lies zuerst `docs/development-notes.md` — dort stehen alle kritischen Erkenntnisse aus dem Hardware-Bringup. Ohne dieses Dokument wirst du dieselben Fehler wiederholen.
 
-Danach lies `docs/superpowers/plans/2026-08-23-phase1-home-screen.md` für den aktuellen Projektstand (Phase 1).
+Phase 0+1 abgeschlossen. Nächstes Ziel: **Phase 2 (USB HID)**. Plan noch nicht erstellt.
 
 ## Kurzübersicht
 
@@ -12,9 +12,13 @@ Danach lies `docs/superpowers/plans/2026-08-23-phase1-home-screen.md` für den a
 - **ESP-IDF aktivieren:** `source ~/esp/esp-idf-5.5/export.sh` (oder `source ~/.bashrc`)
 - **Serial-Port:** `/dev/ttyACM0` — `newgrp dialout` falls Permission denied
 
-## Phase 0: ABGESCHLOSSEN (Stand: 2026-08-23)
+## Phase 0+1: ABGESCHLOSSEN (Stand: 2026-08-23)
 
-✅ Display, LVGL, Hintergrundfarbe gelöst. Nächstes Ziel: Phase 1 (6 Kacheln, Navigation, Statusleiste).
+✅ Phase 0: Display, LVGL, Hintergrundfarbe.
+✅ Phase 1: Home Screen (6 Kacheln 3×2, Slide-Navigation, Statusleiste auf lv_layer_top).
+🎯 Nächstes Ziel: Phase 2 — USB HID (TinyUSB, Keyboard-Shortcuts).
+
+**Alle Farben ≥ 38% Luminanz** — IPS-Panel zeigt darunter grünen Tint. Statusleiste: 0x686868, BG: 0x606060, Cards: 0x747474.
 
 ## Offene Probleme (Stand: 2026-08-23)
 
