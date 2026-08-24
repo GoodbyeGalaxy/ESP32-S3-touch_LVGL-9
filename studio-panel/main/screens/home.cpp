@@ -81,11 +81,20 @@ lv_obj_t *home_screen_create()
                             const_cast<TileDef *>(&TILES[i]));
     }
 
-    touch_nav_attach(scr, [](int dir, void *) {
-        if (dir < 0) {  // swipe left → go to Metering
-            lv_screen_load_anim(metering_screen_create(), LV_SCR_LOAD_ANIM_MOVE_LEFT, 250, 0, true);
-        }
-    }, nullptr);
+    // Transparenter Overlay (letzte Child → höchste Z-Order) — fängt Swipes vor Tiles ab
+    {
+        lv_obj_t *swipe = lv_obj_create(scr);
+        lv_obj_remove_style_all(swipe);
+        lv_obj_set_size(swipe, LV_HOR_RES, LV_VER_RES - THEME_STATUSBAR_H);
+        lv_obj_set_pos(swipe, 0, THEME_STATUSBAR_H);
+        lv_obj_set_style_bg_opa(swipe, LV_OPA_TRANSP, 0);
+        lv_obj_clear_flag(swipe, LV_OBJ_FLAG_SCROLLABLE);
+        touch_nav_attach(swipe, [](int dir, void *) {
+            if (dir < 0) {
+                lv_screen_load_anim(metering_screen_create(), LV_SCR_LOAD_ANIM_MOVE_LEFT, 250, 0, true);
+            }
+        }, nullptr);
+    }
 
     return scr;
 }

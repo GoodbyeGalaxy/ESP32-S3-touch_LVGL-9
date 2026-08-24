@@ -164,7 +164,8 @@ void SkinVU::panel_draw_cb(lv_event_t *e)
                 (lv_coord_t)((int)cx + LABEL_W / 2),
                 (lv_coord_t)((int)cy + LABEL_H / 2)
             };
-            lv_draw_label(layer, &lbldsc, &lbl_area, LABEL_STRS[i], nullptr);
+            lbldsc.text = LABEL_STRS[i];
+            lv_draw_label(layer, &lbldsc, &lbl_area);
         }
     }
 
@@ -207,7 +208,8 @@ void SkinVU::panel_draw_cb(lv_event_t *e)
             (lv_coord_t)(a.x1 + PIVOT_X - 20), (lv_coord_t)(py + 12),
             (lv_coord_t)(a.x1 + PIVOT_X + 20), (lv_coord_t)(py + 30)
         };
-        lv_draw_label(layer, &lbldsc, &lbl_area, data->label, nullptr);
+        lbldsc.text = data->label;
+        lv_draw_label(layer, &lbldsc, &lbl_area);
     }
 }
 

@@ -130,13 +130,24 @@ lv_obj_t *metering_screen_create()
 
     d->skin->create(d->skin_container);
 
-    touch_nav_attach(d->skin_container, [](int dir, void *) {
-        if (dir > 0) {
-            lv_screen_load_anim(home_screen_create(), LV_SCR_LOAD_ANIM_MOVE_RIGHT, 250, 0, true);
-        } else {
-            lv_screen_load_anim(spectrum_screen_create(), LV_SCR_LOAD_ANIM_MOVE_LEFT, 250, 0, true);
-        }
-    }, nullptr);
+    // Transparenter Swipe-Overlay — NACH skin_container hinzugefügt (höhere Z-Order),
+    // VOR den Buttons. Fängt Swipes auf, ohne Skin-Widgets-Klicks zu stören.
+    // Skin-Widgets sind CLICKABLE und absorbieren sonst PRESSED/RELEASED.
+    {
+        lv_obj_t *swipe = lv_obj_create(scr);
+        lv_obj_remove_style_all(swipe);
+        lv_obj_set_size(swipe, LV_HOR_RES, LV_VER_RES - THEME_STATUSBAR_H);
+        lv_obj_set_pos(swipe, 0, THEME_STATUSBAR_H);
+        lv_obj_set_style_bg_opa(swipe, LV_OPA_TRANSP, 0);
+        lv_obj_clear_flag(swipe, LV_OBJ_FLAG_SCROLLABLE);
+        touch_nav_attach(swipe, [](int dir, void *) {
+            if (dir > 0) {
+                lv_screen_load_anim(home_screen_create(), LV_SCR_LOAD_ANIM_MOVE_RIGHT, 250, 0, true);
+            } else {
+                lv_screen_load_anim(spectrum_screen_create(), LV_SCR_LOAD_ANIM_MOVE_LEFT, 250, 0, true);
+            }
+        }, nullptr);
+    }
 
     // Skin-Switch Button (unten rechts) — Touch-Aktion, Sibling des skin_container
     {

@@ -629,15 +629,7 @@ lv_obj_t *spectrum_screen_create()
     d->scr_curve     = make_spectrum_screen(on_back_curve, spectrum_curve_draw, d, &d->curve_canvas, &d->freeze_icon_curve);
     d->scr_waterfall = make_spectrum_screen(on_back_wf, nullptr, d, nullptr, &d->freeze_icon_wf);
 
-    // Swipe right on any spectrum sub-screen → back to metering
-    static auto swipe_to_metering = [](int dir, void *) {
-        if (dir > 0) {
-            lv_screen_load_anim(metering_screen_create(), LV_SCR_LOAD_ANIM_MOVE_RIGHT, 250, 0, true);
-        }
-    };
-    touch_nav_attach(d->scr_bars,      swipe_to_metering, nullptr);
-    touch_nav_attach(d->scr_curve,     swipe_to_metering, nullptr);
-    touch_nav_attach(d->scr_waterfall, swipe_to_metering, nullptr);
+    // Overlays werden NACH allen Canvas/Widget-Erstellungen eingefügt (höchste Z-Order)
 
     // Waterfall canvas: full width, height minus statusbar and back-button area (RGB565, PSRAM)
     constexpr int WF_W = 800;
@@ -657,6 +649,24 @@ lv_obj_t *spectrum_screen_create()
 
     // Cleanup only on bars screen delete (first created, first destroyed on exit)
     lv_obj_add_event_cb(d->scr_bars, on_bars_delete, LV_EVENT_DELETE, d);
+
+    // Transparente Swipe-Overlays — nach allen Canvas-Erstellungen → höchste Z-Order
+    static auto add_swipe = [](lv_obj_t *scr) {
+        lv_obj_t *swipe = lv_obj_create(scr);
+        lv_obj_remove_style_all(swipe);
+        lv_obj_set_size(swipe, LV_HOR_RES, LV_VER_RES - THEME_STATUSBAR_H);
+        lv_obj_set_pos(swipe, 0, THEME_STATUSBAR_H);
+        lv_obj_set_style_bg_opa(swipe, LV_OPA_TRANSP, 0);
+        lv_obj_clear_flag(swipe, LV_OBJ_FLAG_SCROLLABLE);
+        touch_nav_attach(swipe, [](int dir, void *) {
+            if (dir > 0) {
+                lv_screen_load_anim(metering_screen_create(), LV_SCR_LOAD_ANIM_MOVE_RIGHT, 250, 0, true);
+            }
+        }, nullptr);
+    };
+    add_swipe(d->scr_bars);
+    add_swipe(d->scr_curve);
+    add_swipe(d->scr_waterfall);
 
     boot_btn_init(d);
     d->timer = lv_timer_create(spectrum_timer_cb, 33, d);

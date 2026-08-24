@@ -17,22 +17,6 @@ struct TouchNavState {
 };
 
 // ---------------------------------------------------------------------------
-// Helper: find the active touch indev
-// ---------------------------------------------------------------------------
-
-static lv_indev_t *find_touch_indev()
-{
-    lv_indev_t *dev = lv_indev_get_next(nullptr);
-    while (dev) {
-        if (lv_indev_get_type(dev) == LV_INDEV_TYPE_POINTER) {
-            return dev;
-        }
-        dev = lv_indev_get_next(dev);
-    }
-    return nullptr;
-}
-
-// ---------------------------------------------------------------------------
 // LVGL event handler
 // ---------------------------------------------------------------------------
 
@@ -44,7 +28,8 @@ static void touch_nav_event_cb(lv_event_t *e)
     lv_event_code_t code = lv_event_get_code(e);
 
     if (code == LV_EVENT_PRESSED) {
-        lv_indev_t *indev = find_touch_indev();
+        // lv_indev_active() returns the indev that triggered this event — no list walk needed
+        lv_indev_t *indev = lv_indev_active();
         if (!indev) return;
 
         lv_point_t pt;
@@ -56,7 +41,7 @@ static void touch_nav_event_cb(lv_event_t *e)
         if (!state->active) return;
         state->active = false;
 
-        lv_indev_t *indev = find_touch_indev();
+        lv_indev_t *indev = lv_indev_active();
         if (!indev) return;
 
         lv_point_t pt;

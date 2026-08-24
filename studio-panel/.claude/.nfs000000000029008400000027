@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git *)",
+      "Read(//tmp/waveshare-ref/examples/ESP-IDF/09_lvgl_v9_demo/components/**)",
+      "Read(//tmp/waveshare-ref/examples/ESP-IDF/09_lvgl_v9_demo/main/**)",
+      "Skill(claude-md-management:revise-claude-md)",
+      "Bash(bash *)",
+      "Bash(echo \"exit: $?\")"
+    ]
+  }
+}
