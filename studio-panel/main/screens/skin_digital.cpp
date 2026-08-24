@@ -396,6 +396,7 @@ void SkinDigital::create_numerics(lv_obj_t *parent)
 
     auto make_label = [&](int y_offset) -> lv_obj_t* {
         lv_obj_t *lbl = lv_label_create(panel);
+        lv_obj_remove_style_all(lbl);
         lv_obj_set_style_text_color(lbl, THEME_TEXT_PRIMARY, 0);
         lv_obj_set_style_text_font(lbl, THEME_FONT_HINT, 0);
         lv_obj_set_pos(lbl, 0, y_offset);
@@ -403,9 +404,9 @@ void SkinDigital::create_numerics(lv_obj_t *parent)
     };
 
     num_i_    = make_label(0);
-    num_s_    = make_label(26);
-    num_m_    = make_label(52);
-    num_peak_ = make_label(78);
+    num_s_    = make_label(20);
+    num_m_    = make_label(40);
+    num_peak_ = make_label(60);
 
     lv_label_set_text(num_i_,    "I:    --- LKFS");
     lv_label_set_text(num_s_,    "S:    --- LKFS");

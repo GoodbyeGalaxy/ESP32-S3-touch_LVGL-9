@@ -19,6 +19,8 @@ idf_component_register(
         "screens/spectrum.cpp"
         "screens/meter_engine.cpp"
         "screens/skin_digital.cpp"
+        "screens/skin_vu.cpp"
+        "screens/touch_nav.cpp"
     INCLUDE_DIRS "."
     REQUIRES
         esp_driver_i2c

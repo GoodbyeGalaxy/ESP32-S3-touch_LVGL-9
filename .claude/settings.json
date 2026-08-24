@@ -40,7 +40,27 @@
       "Bash(jq *)",
       "Bash(wc -l /mnt/source/data/coding/ESP32-S3/*)",
       "Bash(head /mnt/source/data/coding/ESP32-S3/*)",
-      "Bash(tail /mnt/source/data/coding/ESP32-S3/*)"
+      "Bash(tail /mnt/source/data/coding/ESP32-S3/*)",
+      "Bash(bash /mnt/source/data/coding/ESP32-S3/studio-panel/flash.sh)",
+      "Bash(bash /mnt/source/data/coding/ESP32-S3/studio-panel/flash.sh *)",
+      "Bash(source ~/esp/*)",
+      "Bash(timeout *)",
+      "Bash(python3 ~/esp/*)",
+      "Bash(stat *)",
+      "Bash(strings *)",
+      "Bash(date)",
+      "Bash(grep *)",
+      "Read",
+      "WebSearch",
+      "WebFetch"
+    ],
+    "deny": [
+      "Bash(rm *)",
+      "Bash(git push *)",
+      "Bash(git reset --hard *)",
+      "Bash(git clean *)",
+      "Bash(idf.py erase-flash)",
+      "Bash(dd *)"
     ]
   }
 }

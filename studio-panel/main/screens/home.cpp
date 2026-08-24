@@ -1,5 +1,6 @@
 #include "home.h"
 #include "theme.h"
+#include "screens/touch_nav.h"
 #include "screens/metering.h"
 #include "screens/studio_one.h"
 #include "screens/usb_midi.h"
@@ -79,6 +80,12 @@ lv_obj_t *home_screen_create()
         lv_obj_add_event_cb(tile, on_tile_clicked, LV_EVENT_CLICKED,
                             const_cast<TileDef *>(&TILES[i]));
     }
+
+    touch_nav_attach(scr, [](int dir, void *) {
+        if (dir < 0) {  // swipe left → go to Metering
+            lv_screen_load_anim(metering_screen_create(), LV_SCR_LOAD_ANIM_MOVE_LEFT, 250, 0, true);
+        }
+    }, nullptr);
 
     return scr;
 }

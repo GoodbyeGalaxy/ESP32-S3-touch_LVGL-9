@@ -2,6 +2,8 @@
 #include "audio_data.h"
 #include "theme.h"
 #include "screens/home.h"
+#include "screens/touch_nav.h"
+#include "screens/metering.h"
 #include "lvgl.h"
 #include "driver/gpio.h"
 #include "esp_timer.h"
@@ -626,6 +628,16 @@ lv_obj_t *spectrum_screen_create()
     d->scr_bars      = make_spectrum_screen(on_back_bars,  spectrum_bars_draw,  d, &d->bars_canvas,  &d->freeze_icon_bars);
     d->scr_curve     = make_spectrum_screen(on_back_curve, spectrum_curve_draw, d, &d->curve_canvas, &d->freeze_icon_curve);
     d->scr_waterfall = make_spectrum_screen(on_back_wf, nullptr, d, nullptr, &d->freeze_icon_wf);
+
+    // Swipe right on any spectrum sub-screen → back to metering
+    static auto swipe_to_metering = [](int dir, void *) {
+        if (dir > 0) {
+            lv_screen_load_anim(metering_screen_create(), LV_SCR_LOAD_ANIM_MOVE_RIGHT, 250, 0, true);
+        }
+    };
+    touch_nav_attach(d->scr_bars,      swipe_to_metering, nullptr);
+    touch_nav_attach(d->scr_curve,     swipe_to_metering, nullptr);
+    touch_nav_attach(d->scr_waterfall, swipe_to_metering, nullptr);
 
     // Waterfall canvas: full width, height minus statusbar and back-button area (RGB565, PSRAM)
     constexpr int WF_W = 800;

@@ -2,10 +2,12 @@
 #include "lvgl.h"
 
 // ── Farben ────────────────────────────────────────────────────
-// IPS-Panel kompensieren: H=300 (Magenta) neutralisiert Grüntint, S=Stärke, V=Helligkeit
-#define THEME_BG_HUE        300   // 300=Magenta gegen Grüntint, 0=neutrales Grau
-#define THEME_BG_SAT        30    // Sättigung Tint 0..30 (höher = mehr Magenta)
-#define THEME_BG_BRIGHTNESS 28    // Helligkeit 0..100
+// IPS-Panel Minimum: ≥38% Luminanz, sonst Grüntint sichtbar.
+// IPS-Hintergrund: empirisch bestätigtes Minimum — darunter dominiert Grüntint unabhängig
+// von Farbton-Kompensation (Magenta, Blau, Navy alle getestet, alle schlimmer als neutral).
+#define THEME_BG_HUE        0     // neutrales Grau — FINAL, alle Kompensationen getestet
+#define THEME_BG_SAT        0
+#define THEME_BG_BRIGHTNESS 38    // ≥38% = Panel-Minimum ohne IPS-Grüntint
 #define THEME_BG_PRIMARY    lv_color_hsv_to_rgb(THEME_BG_HUE, THEME_BG_SAT, THEME_BG_BRIGHTNESS)
 #define THEME_BG_CARD         lv_color_hex(0x747474)   // Kacheln / Cards
 #define THEME_BG_CARD_HOVER   lv_color_hex(0x888888)   // Pressed-State
@@ -29,11 +31,14 @@
 #define THEME_LETTER_SPACE_TITLE  2    // px zwischen Titelzeichen — verbessert Lesbarkeit
 
 // ── Fonts ─────────────────────────────────────────────────────
-// Montserrat für Titel (geschwungen, groß — kein Bleeding bei 24px)
-// unscii_16 für Labels/Hints — pixel-perfekt, kein Anti-Aliasing-Bleeding
+// Montserrat 24: Titel — scharf ab dieser Größe
+// Montserrat 18: Textlabels — besser lesbar als 16px AA auf IPS
+// Montserrat 14: Hints/Sekundär
+// unscii_16: Zahlenwerte — pixel-perfect, kein AA-Bleeding auf RGB565
 #define THEME_FONT_TITLE      (&lv_font_montserrat_24)
-#define THEME_FONT_LABEL      (&lv_font_montserrat_16)
-#define THEME_FONT_HINT       (&lv_font_montserrat_16)
+#define THEME_FONT_LABEL      (&lv_font_montserrat_18)
+#define THEME_FONT_HINT       (&lv_font_montserrat_14)
+#define THEME_FONT_NUM        (&lv_font_unscii_16)
 
 // ── Helper: neuen Screen mit Dark-Background erstellen ────────
 // Gibt IMMER lv_obj_create(nullptr) zurück — nie lv_screen_active() verwenden.

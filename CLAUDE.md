@@ -5,7 +5,7 @@
 **Projekt-Skills:** `docs/skills/` — Schritt-für-Schritt-Workflows für wiederkehrende Aufgaben.
 - `docs/skills/flash-verify.md` — Flash + Verifikation (OPI-Flash meldet Erfolg auch bei Fehler!)
 
-Phase 0+1+2+3+4(Metering Pro) abgeschlossen. Nächstes Ziel: **Phase 5 (USB HID)** oder **Touch-Fix**.
+Phase 0+1+2+3+4(Metering Pro)+Touch abgeschlossen. Nächstes Ziel: **Phase 5 (USB HID)** oder **VU-Meter Skin**.
 
 ## Kurzübersicht
 
@@ -28,17 +28,26 @@ Phase 0+1+2+3+4(Metering Pro) abgeschlossen. Nächstes Ziel: **Phase 5 (USB HID)
 
 **Dev-Workaround aktiv:** `ui.cpp` bootet direkt in Metering. Für Home-Screen: `home_screen_load()` in ui.cpp wiederherstellen.
 
-**Hintergrund-Tuning:** `THEME_BG_BRIGHTNESS`, `THEME_BG_SAT`, `THEME_BG_HUE` in `theme.h` — aktuell H=300/S=30/V=28 (Magenta-Kompensation für IPS-Grüntint). Bei zu viel Grün: SAT erhöhen oder V auf 35+ anheben.
+**Hintergrund FINAL:** H=0, S=0, V=38 in `theme.h`. Alle Kompensationen exhaustiv getestet (Magenta H=300, Blau H=220, Navy H=240, V=0–36) — alle schlimmer als neutrales Grau. Nicht weiter experimentieren.
 
 **Alle Farben ≥ 38% Luminanz** — IPS-Panel zeigt darunter grünen Tint. Ausnahme: reine Visualisierungsflächen (Waterfall-Canvas, FFT-Kurve). Statusleiste: 0x686868, BG: 0x606060, Cards: 0x747474.
 
 ## Offene Probleme (Stand: 2026-08-23)
 
-1. **CH422G** antwortet nicht auf I2C (ESP_FAIL) — Backlight läuft über Hardware-Default, Touch-Reset schlägt fehl → GT911 nicht initialisiert. Diagnose braucht Logikanalysator.
-2. **GT911** Touch nicht initialisiert (hängt an CH422G-Reset)
+1. **CH422G** antwortet nicht auf I2C (ESP_FAIL) — Backlight läuft über Hardware-Default. Kein Reset möglich, aber Touch läuft trotzdem (siehe unten).
+2. **GT911 FUNKTIONIERT** — initialisiert via Adress-Fallback (0x5D→0x14) ohne CH422G-Reset. touch.cpp probiert beide Adressen automatisch.
 3. **IPS-Panel Schwarzpunkt** — Grünlicher Tint unterhalb ~38% Luminanz. Minimale Hintergrundfarbe: `0x606060`. NIEMALS `0x0A0A0A` oder ähnlich dunkle Werte. **AUCH Canvas-Flächen betroffen** — Canvas-Hintergrund = `0x630C` (RGB565 von 0x606060), nicht 0x0000!
 4. **Drift (Bild verschiebt sich horizontal)** — PSRAM-Bandbreiten-Contention zwischen LCD-DMA und CPU-PSRAM-Zugriffen. Fix: `bounce_buffer_size_px = LCD_H_RES * 4` in display.cpp. Große PSRAM-Arrays in DRAM allozieren wenn möglich.
 5. **CH422G SDA stuck-low** — I2C-Bus physisch defekt. Nur Logikanalysator hilft. Backlight läuft über Hardware-Default ohne I2C.
+
+## Fonts (Stand 2026-08-24)
+
+`THEME_FONT_TITLE`=Montserrat 24, `THEME_FONT_LABEL`=Montserrat 18, `THEME_FONT_HINT`=Montserrat 14, `THEME_FONT_NUM`=unscii_16 (Zahlenwerte, pixel-perfect).
+Labels: immer `lv_obj_remove_style_all()`. Zentrierte Labels: `lv_label_set_long_mode(LV_LABEL_LONG_CLIP)` + explizite Größe setzen — sonst Flackern/Scrollen.
+
+**Build-Verifikation:** `APP_BUILD` ändert sich nur wenn `main.cpp` rekompiliert wird. Besser: `strings build/studio-panel.bin | grep "APP_BUILD"` oder Binary-Timestamp prüfen (`stat`). Builds dauern 3–5 min — immer background bash (`run_in_background: true`).
+
+**Subagent-Permissions:** `settings.json`-Änderungen brauchen Session-Neustart. Subagenten erben neue Permissions erst danach.
 
 ## Wichtig: xQueueOverwrite braucht Queue-Länge = 1
 `g_audio_queue = xQueueCreate(1, sizeof(AudioPacket))` — NICHT 2. xQueueOverwrite() asserted bei Länge ≠ 1.
