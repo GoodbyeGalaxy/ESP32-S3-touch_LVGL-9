@@ -115,7 +115,8 @@ static void on_back(lv_event_t *e)
 lv_obj_t *metering_screen_create()
 {
     auto *d  = new MeteringScreenData{};
-    d->skin  = make_skin(0);
+    d->skin_idx = 1;
+    d->skin  = make_skin(1);
 
     lv_obj_t *scr = theme_make_screen();
     lv_obj_add_event_cb(scr, on_screen_delete, LV_EVENT_DELETE, d);
