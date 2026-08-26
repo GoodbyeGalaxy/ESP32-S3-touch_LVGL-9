@@ -2,6 +2,9 @@
 #include "theme.h"
 #include "screens/home.h"
 #include "screens/touch_nav.h"
+#include "screens/gradient_test.h"
+#include "screens/foot.h"
+#include "screens/statusbar.h"
 #include "wifi.h"
 #include "audio_data.h"
 #include "lvgl.h"
@@ -76,12 +79,6 @@ static void on_delete(lv_event_t *e)
 
 // ── Navigation ────────────────────────────────────────────────────────────────
 
-static void on_back(lv_event_t *e)
-{
-    lv_obj_t *home = home_screen_create();
-    lv_screen_load_anim(home, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 250, 0, true);
-}
-
 static void on_swipe(int direction, void *user_data)
 {
     if (direction == -1) {
@@ -146,6 +143,8 @@ lv_obj_t *settings_screen_create()
     lv_obj_t *scr = theme_make_screen();
     lv_obj_add_event_cb(scr, on_delete, LV_EVENT_DELETE, d);
 
+    statusbar_set_screen_name("SETTINGS");
+
     // Title
     lv_obj_t *title = lv_label_create(scr);
     lv_label_set_text(title, "SETTINGS");
@@ -155,36 +154,44 @@ lv_obj_t *settings_screen_create()
 
     // ── WiFi card ─────────────────────────────────────────────────────────────
     lv_obj_t *c_wifi = make_card(scr, PAD, ROW1_Y, CARD_W, CARD_H, "NETWORK");
+    theme_apply_glow(c_wifi);
     d->wifi_dot    = make_dot(c_wifi, 12, 36);
     d->wifi_status = make_label(c_wifi, "...", THEME_FONT_LABEL, THEME_TEXT_PRIMARY, 30, 30);
     make_label(c_wifi, "WiFi Station", THEME_FONT_HINT, THEME_TEXT_HINT, 12, 72);
 
     // ── Audio card ────────────────────────────────────────────────────────────
     lv_obj_t *c_audio = make_card(scr, COL2_X, ROW1_Y, CARD_W, CARD_H, "AUDIO IN");
+    theme_apply_glow(c_audio);
     d->audio_dot  = make_dot(c_audio, 12, 36);
     d->audio_mode = make_label(c_audio, "...", THEME_FONT_LABEL, THEME_TEXT_PRIMARY, 30, 30);
     d->audio_seq  = make_label(c_audio, "", THEME_FONT_HINT, THEME_TEXT_HINT, 12, 72);
 
     // ── System card ───────────────────────────────────────────────────────────
     lv_obj_t *c_sys = make_card(scr, PAD, ROW2_Y, CARD_W, CARD_H, "SYSTEM");
+    theme_apply_glow(c_sys);
     d->sys_heap = make_label(c_sys, "--- kB", THEME_FONT_LABEL, THEME_TEXT_PRIMARY, 12, 32);
     make_label(c_sys, IDF_VER, THEME_FONT_HINT, THEME_TEXT_HINT, 12, 72);
 
     // ── Build card ────────────────────────────────────────────────────────────
     lv_obj_t *c_build = make_card(scr, COL2_X, ROW2_Y, CARD_W, CARD_H, "BUILD");
+    theme_apply_glow(c_build);
     make_label(c_build, __DATE__, THEME_FONT_LABEL, THEME_TEXT_PRIMARY, 12, 32);
     make_label(c_build, __TIME__, THEME_FONT_HINT, THEME_TEXT_HINT, 12, 72);
 
-    // Back button
-    lv_obj_t *btn = lv_btn_create(scr);
-    lv_obj_set_size(btn, 90, 36);
-    lv_obj_align(btn, LV_ALIGN_BOTTOM_LEFT, 16, -8);
-    lv_obj_set_style_bg_color(btn, THEME_BG_CARD, 0);
-    lv_obj_add_event_cb(btn, on_back, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t *btn_lbl = lv_label_create(btn);
-    lv_label_set_text(btn_lbl, LV_SYMBOL_LEFT " Home");
-    lv_obj_set_style_text_color(btn_lbl, THEME_TEXT_PRIMARY, 0);
-    lv_obj_center(btn_lbl);
+    // Foot bar with Home button; add Gradient → button in right_zone
+    lv_obj_t *right_zone = foot_create(scr);
+
+    lv_obj_t *grad_btn = lv_btn_create(right_zone);
+    lv_obj_set_size(grad_btn, 120, 40);
+    lv_obj_align(grad_btn, LV_ALIGN_RIGHT_MID, -8, 0);
+    lv_obj_set_style_bg_color(grad_btn, THEME_BG_CARD, 0);
+    lv_obj_add_event_cb(grad_btn, [](lv_event_t *) {
+        lv_screen_load_anim(gradient_test_screen_create(), LV_SCR_LOAD_ANIM_MOVE_LEFT, 200, 0, true);
+    }, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *grad_lbl = lv_label_create(grad_btn);
+    lv_label_set_text(grad_lbl, "Gradient " LV_SYMBOL_RIGHT);
+    lv_obj_set_style_text_color(grad_lbl, THEME_TEXT_PRIMARY, 0);
+    lv_obj_center(grad_lbl);
 
     touch_nav_attach(scr, on_swipe, nullptr);
 

@@ -2,18 +2,14 @@
 #include "theme.h"
 #include "screens/home.h"
 #include "screens/touch_nav.h"
+#include "screens/foot.h"
+#include "screens/statusbar.h"
 #include "lvgl.h"
 
 // Transport/session display for Studio One DAW integration (Phase 5: WebSocket).
 // Currently shows a static mockup; live data arrives via WebSocket when implemented.
 
 // ── Navigation ────────────────────────────────────────────────────────────────
-
-static void on_back(lv_event_t *e)
-{
-    lv_obj_t *home = home_screen_create();
-    lv_screen_load_anim(home, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 250, 0, true);
-}
 
 // IN: direction (+1=fwd, -1=back). OUT: loads home on back swipe.
 static void on_swipe(int direction, void *user_data)
@@ -30,6 +26,8 @@ static void on_swipe(int direction, void *user_data)
 lv_obj_t *studio_one_screen_create()
 {
     lv_obj_t *scr = theme_make_screen();
+
+    statusbar_set_screen_name("STUDIO ONE");
 
     // ── Status bar zone: title + connection pill ──────────────────────────────
     lv_obj_t *title = lv_label_create(scr);
@@ -61,6 +59,7 @@ lv_obj_t *studio_one_screen_create()
     lv_obj_set_style_bg_opa(bpm_card, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(bpm_card, THEME_RADIUS, 0);
     lv_obj_clear_flag(bpm_card, LV_OBJ_FLAG_SCROLLABLE);
+    theme_apply_glow(bpm_card);
 
     lv_obj_t *bpm_hint = lv_label_create(bpm_card);
     lv_label_set_text(bpm_hint, "TEMPO");
@@ -95,6 +94,7 @@ lv_obj_t *studio_one_screen_create()
     lv_obj_set_style_bg_opa(pos_card, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(pos_card, THEME_RADIUS, 0);
     lv_obj_clear_flag(pos_card, LV_OBJ_FLAG_SCROLLABLE);
+    theme_apply_glow(pos_card);
 
     lv_obj_t *pos_hint = lv_label_create(pos_card);
     lv_label_set_text(pos_hint, "POSITION");
@@ -133,16 +133,7 @@ lv_obj_t *studio_one_screen_create()
         lv_obj_center(tb_lbl);
     }
 
-    // Back button
-    lv_obj_t *btn = lv_btn_create(scr);
-    lv_obj_set_size(btn, 90, 36);
-    lv_obj_align(btn, LV_ALIGN_BOTTOM_LEFT, 16, -8);
-    lv_obj_set_style_bg_color(btn, THEME_BG_CARD, 0);
-    lv_obj_add_event_cb(btn, on_back, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t *back_lbl = lv_label_create(btn);
-    lv_label_set_text(back_lbl, LV_SYMBOL_LEFT " Home");
-    lv_obj_set_style_text_color(back_lbl, THEME_TEXT_PRIMARY, 0);
-    lv_obj_center(back_lbl);
+    foot_create(scr);
 
     touch_nav_attach(scr, on_swipe, nullptr);
 

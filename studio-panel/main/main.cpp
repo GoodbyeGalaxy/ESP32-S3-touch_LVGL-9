@@ -23,6 +23,7 @@ extern "C" void app_main()
 
     i2c_master_bus_handle_t i2c_bus = ch422g_init();
     ch422g_i2c_scan(i2c_bus);
+
     display_init(num_fbs);
     ch422g_touch_reset();
     touch_init(i2c_bus);

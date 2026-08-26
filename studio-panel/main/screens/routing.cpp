@@ -2,6 +2,8 @@
 #include "theme.h"
 #include "screens/home.h"
 #include "screens/touch_nav.h"
+#include "screens/foot.h"
+#include "screens/statusbar.h"
 #include "lvgl.h"
 #include <cstdio>
 
@@ -26,25 +28,19 @@ static constexpr int FADER_OFF_Y  = 36;
 
 // ── Channel definitions ───────────────────────────────────────────────────────
 
-struct ChannelDef { const char *name; uint8_t init_val; lv_color_t color; };
+struct ChannelDef { const char *name; uint8_t init_val; uint32_t color_hex; };
 static const ChannelDef CHANNELS[STRIP_COUNT] = {
-    { "IN 1",  100, { .full = 0x3B82F6 } },
-    { "IN 2",  100, { .full = 0x3B82F6 } },
-    { "IN 3",   80, { .full = 0x3B82F6 } },
-    { "IN 4",   80, { .full = 0x3B82F6 } },
-    { "FX 1",   60, { .full = 0x8B5CF6 } },
-    { "FX 2",   60, { .full = 0x8B5CF6 } },
-    { "BUS L",  95, { .full = 0x22C55E } },
-    { "BUS R",  95, { .full = 0x22C55E } },
+    { "IN 1",  100, 0x3B82F6 },
+    { "IN 2",  100, 0x3B82F6 },
+    { "IN 3",   80, 0x3B82F6 },
+    { "IN 4",   80, 0x3B82F6 },
+    { "FX 1",   60, 0x8B5CF6 },
+    { "FX 2",   60, 0x8B5CF6 },
+    { "BUS L",  95, 0x22C55E },
+    { "BUS R",  95, 0x22C55E },
 };
 
 // ── Navigation ────────────────────────────────────────────────────────────────
-
-static void on_back(lv_event_t *e)
-{
-    lv_obj_t *home = home_screen_create();
-    lv_screen_load_anim(home, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 250, 0, true);
-}
 
 // IN: direction (+1=fwd, -1=back). OUT: loads home on back swipe.
 static void on_swipe(int direction, void *user_data)
@@ -69,6 +65,7 @@ static void create_channel_strip(lv_obj_t *parent, const ChannelDef &ch, int x)
     lv_obj_set_style_bg_opa(strip, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(strip, 6, 0);
     lv_obj_clear_flag(strip, LV_OBJ_FLAG_SCROLLABLE);
+    theme_apply_glow(strip);
 
     // Level bar (vertical)
     lv_obj_t *bar = lv_bar_create(strip);
@@ -78,7 +75,7 @@ static void create_channel_strip(lv_obj_t *parent, const ChannelDef &ch, int x)
     lv_bar_set_range(bar, 0, 127);
     lv_bar_set_value(bar, ch.init_val, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(bar, lv_color_hex(0x606060), 0);
-    lv_obj_set_style_bg_color(bar, ch.color, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(bar, lv_color_hex(ch.color_hex), LV_PART_INDICATOR);
     lv_obj_set_style_radius(bar, 3, 0);
     lv_obj_set_style_radius(bar, 3, LV_PART_INDICATOR);
 
@@ -96,6 +93,8 @@ static void create_channel_strip(lv_obj_t *parent, const ChannelDef &ch, int x)
 lv_obj_t *routing_screen_create()
 {
     lv_obj_t *scr = theme_make_screen();
+
+    statusbar_set_screen_name("ROUTING");
 
     // Title + connection status
     lv_obj_t *title = lv_label_create(scr);
@@ -116,16 +115,7 @@ lv_obj_t *routing_screen_create()
         create_channel_strip(scr, CHANNELS[i], x);
     }
 
-    // Back button
-    lv_obj_t *btn = lv_btn_create(scr);
-    lv_obj_set_size(btn, 90, 36);
-    lv_obj_align(btn, LV_ALIGN_BOTTOM_LEFT, 16, -8);
-    lv_obj_set_style_bg_color(btn, THEME_BG_CARD, 0);
-    lv_obj_add_event_cb(btn, on_back, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t *btn_lbl = lv_label_create(btn);
-    lv_label_set_text(btn_lbl, LV_SYMBOL_LEFT " Home");
-    lv_obj_set_style_text_color(btn_lbl, THEME_TEXT_PRIMARY, 0);
-    lv_obj_center(btn_lbl);
+    foot_create(scr);
 
     touch_nav_attach(scr, on_swipe, nullptr);
 

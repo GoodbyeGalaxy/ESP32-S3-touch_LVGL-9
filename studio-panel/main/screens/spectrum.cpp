@@ -1,3 +1,9 @@
+// spectrum.cpp — Spectrum Analyzer Screen
+// Layout: Head 32px (statusbar, global), Content 800×392px (Y=32..424),
+//         Foot 56px (Y=424..480, 0x4A4A4A bg, ← Home + [BAR]/[WAVE] toggle).
+// Visualisation: 64 bars (4 bins averaged), freq-based color gradient, peak-hold 2s.
+// Second view: line curve (green, 2px, no peak-hold).
+
 #include "spectrum.h"
 #include "audio_data.h"
 #include "theme.h"
@@ -5,8 +11,6 @@
 #include "screens/touch_nav.h"
 #include "screens/metering.h"
 #include "lvgl.h"
-#include "driver/gpio.h"
-#include "esp_timer.h"
 #include "esp_log.h"
 #include <cmath>
 #include <cstring>
@@ -14,663 +18,383 @@
 
 static const char *TAG = "spectrum";
 
-// ── Color LUTs ────────────────────────────────────────────────────────────────
+// ── Constants ─────────────────────────────────────────────────────────────────
 
-// 4 color presets, each a 256-entry LUT mapping magnitude (0..255) → color.
-// Initialized at screen create time; fast per-pixel lookup during waterfall update.
-static lv_color_t s_lut[4][256];
+static constexpr int   SCREEN_W    = 800;
+static constexpr int   SCREEN_H    = 480;
+static constexpr int   HEAD_H      = THEME_STATUSBAR_H;          // 32
+static constexpr int   FOOT_H      = 56;
+static constexpr int   CONTENT_Y   = HEAD_H;                     // 32
+static constexpr int   CONTENT_H   = SCREEN_H - HEAD_H - FOOT_H; // 392
+static constexpr int   FOOT_Y      = CONTENT_Y + CONTENT_H;      // 424
 
-// pre-computes 4×256 LUT at screen create time — fast per-pixel lookup during waterfall
-static void init_color_luts()
-{
-    // Helper: linearly interpolate between two packed hex RGB colors
-    auto lerp_hex = [](uint32_t a, uint32_t b, float t) -> lv_color_t {
-        uint8_t r  = (uint8_t)(((a >> 16) & 0xFF) + t * (((b >> 16) & 0xFF) - ((a >> 16) & 0xFF)));
-        uint8_t g  = (uint8_t)(((a >>  8) & 0xFF) + t * (((b >>  8) & 0xFF) - ((a >>  8) & 0xFF)));
-        uint8_t bl = (uint8_t)(( a        & 0xFF) + t * (( b        & 0xFF) - ( a        & 0xFF)));
-        return lv_color_make(r, g, bl);
-    };
+static constexpr int   NUM_BARS    = 64;
+static constexpr int   BINS_PER_BAR = 256 / NUM_BARS;            // 4
+// Bar widths are computed per-bar as floor(i+1 * W/64) - floor(i * W/64) - 1
+// to distribute 800px evenly across 64 bars without accumulated rounding error.
 
-    // Preset 0 — Classic: Black→Blue→Cyan→Yellow→Red→White
-    static const uint32_t C0[] = {0x000000, 0x0000AA, 0x00AAAA, 0xAAAA00, 0xAA0000, 0xFFFFFF};
-    // Preset 1 — Green: Black→DarkGreen→BrightGreen→White
-    static const uint32_t C1[] = {0x000000, 0x003300, 0x30BC30, 0xFFFFFF};
-    // Preset 2 — Warm: Black→DarkRed→Orange→Yellow→White
-    static const uint32_t C2[] = {0x000000, 0x550000, 0xC84000, 0xE0B020, 0xFFFFFF};
-    // Preset 3 — Purple: Black→DarkViolet→Magenta→White
-    static const uint32_t C3[] = {0x000000, 0x330033, 0xC020C0, 0xFFFFFF};
-
-    auto fill_lut = [&](int preset, const uint32_t *stops, int n_stops) {
-        for (int i = 0; i < 256; i++) {
-            float t  = (float)i / 255.0f * (n_stops - 1);
-            int   lo = (int)t;
-            int   hi = std::min(lo + 1, n_stops - 1);
-            s_lut[preset][i] = lerp_hex(stops[lo], stops[hi], t - lo);
-        }
-    };
-    fill_lut(0, C0, 6);
-    fill_lut(1, C1, 4);
-    fill_lut(2, C2, 5);
-    fill_lut(3, C3, 4);
-}
+static constexpr int   FREQ_LABEL_H = 52;                        // px reserved at bottom of content for labels
+static constexpr int   VIS_H        = CONTENT_H - FREQ_LABEL_H; // 340 px for bars/curve
+static constexpr float PEAK_HOLD_S  = 2.0f;
+static constexpr float PEAK_FALL_RATE = 0.5f;  // magnitude/s after hold expires
+static constexpr float TIMER_PERIOD_MS = 33.0f; // ~30 Hz
+static constexpr float DT           = TIMER_PERIOD_MS / 1000.0f;
+static constexpr float SMOOTHING    = 0.35f;    // EMA alpha
 
 // ── Data ──────────────────────────────────────────────────────────────────────
 
-struct SpectrumScreenData {
-    // Three separate screen objects (each is an lv_obj root)
-    lv_obj_t *scr_bars;      // View 1 — classic bars
-    lv_obj_t *scr_curve;     // View 2 — FFT area chart
-    lv_obj_t *scr_waterfall; // View 3 — scrolling heatmap
+struct SpectrumData {
+    float bins[NUM_BARS];       // averaged+smoothed FFT magnitude, 0..1
+    float peak_hold[NUM_BARS];  // current peak-hold magnitude
+    float peak_timer[NUM_BARS]; // seconds until peak starts falling
+    bool  wave_mode;            // false=bars, true=line curve
 
-    // Per-view draw containers
-    lv_obj_t *bars_canvas;
-    lv_obj_t *curve_canvas;
-    lv_obj_t *wf_canvas;    // lv_canvas with PSRAM buffer
-    void     *wf_buf;       // PSRAM allocated waterfall buffer
-
-    // Shared
     lv_timer_t *timer;
-    float    smoothed[256];  // exponential MA; shared across views
-    bool     frozen;         // when true: timer runs but display not invalidated
-
-    // Freeze icon (visible on all views when frozen)
-    lv_obj_t *freeze_icon_bars;
-    lv_obj_t *freeze_icon_curve;
-    lv_obj_t *freeze_icon_wf;
-
-    // Peak hold for bars view
-    float    peak_hold[256];
-    float    peak_hold_timer[256];
-
-    // Waterfall
-    uint8_t  color_preset; // 0=Classic 1=Green 2=Warm 3=Purple
-    bool     wf_rtl;       // true = right-to-left (default)
-
-    // Context menu
-    lv_obj_t *ctx_menu;    // nullptr when hidden
-
-    // BOOT button state
-    volatile int64_t btn_press_us; // timestamp of last press (from ISR)
-    volatile bool    btn_event;    // set by ISR on release
-    volatile bool    btn_long;     // set by ISR: true if press >= 1s
+    lv_obj_t   *scr;
+    lv_obj_t   *vis_area;       // draw container (LV_EVENT_DRAW_MAIN)
+    lv_obj_t   *mode_btn_lbl;   // label inside [BAR]/[WAVE] button
 };
 
-// Single data instance per screen lifetime — allocated on create, freed on delete
-static SpectrumScreenData *s_data = nullptr;
+// Single instance per screen lifetime
+static SpectrumData *s_data = nullptr;
 
-// ── BOOT button ───────────────────────────────────────────────────────────────
+// ── Color helper ──────────────────────────────────────────────────────────────
 
-// ISR: records press/release timing; sets btn_event + btn_long on release.
-// IRAM_ATTR required for ISR functions.
-static void IRAM_ATTR boot_btn_isr(void *arg)
+// IN:  freq_fraction = 0..1 (0=20Hz/bass, 1=20kHz/treble), magnitude = 0..1 (brightness)
+// OUT: lv_color_t — gradient: bass blue → mid green → treble yellow/white
+static lv_color_t bin_to_color(float magnitude, float freq_fraction)
 {
-    auto *d = static_cast<SpectrumScreenData*>(arg);
-    int level = gpio_get_level(GPIO_NUM_0);
-    int64_t now = esp_timer_get_time();
-    if (level == 0) {
-        d->btn_press_us = now;                          // falling edge = press
+    // Base gradient by frequency (independent of magnitude):
+    //   freq 0.0 → pure blue    0x3B82F6
+    //   freq 0.5 → green        0x22C55E
+    //   freq 1.0 → yellow/white 0xF0C020
+    uint8_t r, g, b;
+    if (freq_fraction < 0.5f) {
+        float t = freq_fraction * 2.0f; // 0..1
+        r = (uint8_t)(0x3B + t * (int)(0x22 - 0x3B));  // 59 → 34
+        g = (uint8_t)(0x82 + t * (int)(0xC5 - 0x82));  // 130 → 197
+        b = (uint8_t)(0xF6 + t * (int)(0x5E - 0xF6));  // 246 → 94
     } else {
-        d->btn_long  = (now - d->btn_press_us) >= 1000000; // 1s threshold
-        d->btn_event = true;                            // rising edge = release
+        float t = (freq_fraction - 0.5f) * 2.0f; // 0..1
+        r = (uint8_t)(0x22 + t * (int)(0xF0 - 0x22));  // 34 → 240
+        g = (uint8_t)(0xC5 + t * (int)(0xC0 - 0xC5));  // 197 → 192
+        b = (uint8_t)(0x5E + t * (int)(0x20 - 0x5E));  // 94 → 32
     }
+    // Apply magnitude as brightness multiplier (dim bar = less bright color)
+    // Minimum brightness ~30% so very quiet bars still show their color
+    float bright = 0.30f + 0.70f * magnitude;
+    r = (uint8_t)(r * bright);
+    g = (uint8_t)(g * bright);
+    b = (uint8_t)(b * bright);
+    return lv_color_make(r, g, b);
 }
 
-// Configures GPIO_NUM_0 as input with pull-up and ANYEDGE interrupt.
-// Installs ISR service (idempotent if already installed) and registers boot_btn_isr.
-static void boot_btn_init(SpectrumScreenData *d)
+// ── Draw callback ─────────────────────────────────────────────────────────────
+
+// IN:  LV_EVENT_DRAW_MAIN on vis_area, user_data = SpectrumData*
+// OUT: draws bar spectrum or line curve depending on wave_mode
+static void spectrum_draw_cb(lv_event_t *e)
 {
-    gpio_config_t cfg = {
-        .pin_bit_mask = (1ULL << GPIO_NUM_0),
-        .mode         = GPIO_MODE_INPUT,
-        .pull_up_en   = GPIO_PULLUP_ENABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type    = GPIO_INTR_ANYEDGE,  // both press and release
-    };
-    gpio_config(&cfg);
-    gpio_install_isr_service(0);
-    gpio_isr_handler_add(GPIO_NUM_0, boot_btn_isr, d);
-}
-
-// Removes the BOOT button ISR handler; does not uninstall the service globally.
-static void boot_btn_deinit()
-{
-    gpio_isr_handler_remove(GPIO_NUM_0);
-}
-
-// ── Navigation ────────────────────────────────────────────────────────────────
-
-static void navigate_to_bars(SpectrumScreenData *d);   // forward decl
-static void navigate_to_curve(SpectrumScreenData *d);
-static void navigate_to_wf(SpectrumScreenData *d);
-static void navigate_back_home();
-
-// Loads scr_bars with a right-slide animation (returning from curve/waterfall).
-static void navigate_to_bars(SpectrumScreenData *d)
-{
-    lv_screen_load_anim(d->scr_bars, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 200, 0, false);
-}
-
-// Loads scr_curve with a left-slide animation (going forward from bars).
-static void navigate_to_curve(SpectrumScreenData *d)
-{
-    lv_screen_load_anim(d->scr_curve, LV_SCR_LOAD_ANIM_MOVE_LEFT, 200, 0, false);
-}
-
-// Loads scr_waterfall with a left-slide animation (going forward from curve).
-static void navigate_to_wf(SpectrumScreenData *d)
-{
-    lv_screen_load_anim(d->scr_waterfall, LV_SCR_LOAD_ANIM_MOVE_LEFT, 200, 0, false);
-}
-
-// Cleans up all spectrum resources before loading home.
-// Called from all back-button handlers — must be idempotent.
-static void navigate_back_home()
-{
-    if (s_data) {
-        // Stop timer first to prevent callbacks accessing freed data
-        if (s_data->timer) { lv_timer_delete(s_data->timer); s_data->timer = nullptr; }
-        boot_btn_deinit();
-        if (s_data->wf_buf) { heap_caps_free(s_data->wf_buf); s_data->wf_buf = nullptr; }
-
-        // Delete the two sibling screens that are NOT currently active.
-        // The active screen is deleted by lv_screen_load_anim auto_del=true.
-        lv_obj_t *active = lv_screen_active();
-        if (s_data->scr_bars      && s_data->scr_bars      != active) lv_obj_delete(s_data->scr_bars);
-        if (s_data->scr_curve     && s_data->scr_curve     != active) lv_obj_delete(s_data->scr_curve);
-        if (s_data->scr_waterfall && s_data->scr_waterfall != active) lv_obj_delete(s_data->scr_waterfall);
-
-        delete s_data;
-        s_data = nullptr;
-    }
-    lv_obj_t *home = home_screen_create();
-    lv_screen_load_anim(home, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 200, 0, true);
-}
-
-// ── Forward declarations (implemented in Tasks 6-8) ──────────────────────────
-
-static void spectrum_bars_draw(lv_event_t *e);
-static void spectrum_curve_draw(lv_event_t *e);
-static void spectrum_wf_update(SpectrumScreenData *d);
-static void spectrum_ctx_menu_show(SpectrumScreenData *d);
-static void spectrum_ctx_menu_hide(SpectrumScreenData *d);
-
-// maps screen pixel to FFT bin on log frequency scale (20Hz–20kHz)
-static int x_to_bin(int x, int w)
-{
-    constexpr float F_MIN   = 20.0f;
-    constexpr float F_MAX   = 20000.0f;
-    constexpr float NYQUIST = 22050.0f;
-    float ratio = (float)x / (float)w;
-    float freq  = F_MIN * powf(F_MAX / F_MIN, ratio);
-    int   bin   = (int)(freq / NYQUIST * 256.0f);
-    return (bin < 0) ? 0 : (bin > 255) ? 255 : bin;
-}
-
-// Interpolates between two lv_color_t values. t = 0.0..1.0.
-static lv_color_t color_lerp(lv_color_t a, lv_color_t b, float t)
-{
-    uint8_t r  = (uint8_t)(a.red   + t * ((float)b.red   - (float)a.red));
-    uint8_t g  = (uint8_t)(a.green + t * ((float)b.green - (float)a.green));
-    uint8_t bu = (uint8_t)(a.blue  + t * ((float)b.blue  - (float)a.blue));
-    return lv_color_make(r, g, bu);
-}
-
-// LV_EVENT_DRAW_MAIN; reads smoothed[] and peak_hold[] from SpectrumScreenData
-static void spectrum_bars_draw(lv_event_t *e)
-{
-    auto *d     = static_cast<SpectrumScreenData*>(lv_event_get_user_data(e));
+    auto *d     = static_cast<SpectrumData*>(lv_event_get_user_data(e));
     auto *layer = lv_event_get_layer(e);
     auto *obj   = lv_event_get_target_obj(e);
-    lv_area_t a;
-    lv_obj_get_coords(obj, &a);
-    int32_t w = lv_area_get_width(&a);
-    int32_t h = lv_area_get_height(&a);
 
-    // Black background (pure visualisation area — luminance rule exempt)
+    lv_area_t area;
+    lv_obj_get_coords(obj, &area);
+    int32_t w = lv_area_get_width(&area);
+
+    // Draw dark background — pure visualisation area, luminance rule exempt
     {
         lv_draw_rect_dsc_t dsc;
         lv_draw_rect_dsc_init(&dsc);
         dsc.bg_color = lv_color_hex(0x0A0A0A);
         dsc.radius   = 0;
-        lv_draw_rect(layer, &dsc, &a);
+        lv_draw_rect(layer, &dsc, &area);
     }
 
-    // Color stops: dark green → bright green → yellow → red (by amplitude)
-    static const lv_color_t C0 = lv_color_make(0x20, 0x50, 0x20);  // dark green  (quiet)
-    static const lv_color_t C1 = lv_color_make(0x30, 0xBC, 0x30);  // bright green
-    static const lv_color_t C2 = lv_color_make(0xC8, 0xA0, 0x30);  // yellow
-    static const lv_color_t C3 = lv_color_make(0xE0, 0x50, 0x50);  // red         (loud)
+    // Working area for bars/curve (excludes bottom label zone)
+    lv_coord_t vis_bot  = area.y1 + (lv_coord_t)VIS_H;  // bars drawn in [area.y1, vis_bot]
+    lv_coord_t label_y  = vis_bot + 4;                    // baseline for frequency labels
 
-    for (int x = 0; x < w; x++) {
-        int   bin   = x_to_bin(x, w);
-        float mag   = d->smoothed[bin];          // 0.0..1.0
-        int32_t bar_h = (int32_t)(mag * (float)h);
-        if (bar_h < 1) bar_h = 1;
+    if (!d->wave_mode) {
+        // ── BAR MODE ─────────────────────────────────────────────────────────
 
-        // Bar color interpolated by magnitude
-        lv_color_t col;
-        if      (mag < 0.33f) col = color_lerp(C0, C1, mag / 0.33f);
-        else if (mag < 0.66f) col = color_lerp(C1, C2, (mag - 0.33f) / 0.33f);
-        else                  col = color_lerp(C2, C3, (mag - 0.66f) / 0.34f);
+        for (int i = 0; i < NUM_BARS; i++) {
+            // Compute pixel-precise bar bounds (avoids gap accumulation)
+            lv_coord_t x0 = (lv_coord_t)((float)i       * (float)w / (float)NUM_BARS);
+            lv_coord_t x1 = (lv_coord_t)((float)(i + 1) * (float)w / (float)NUM_BARS) - 1;
 
-        lv_area_t ba = { a.x1 + (lv_coord_t)x, a.y2 - bar_h,
-                         a.x1 + (lv_coord_t)x, a.y2 };
-        lv_draw_rect_dsc_t dsc;
-        lv_draw_rect_dsc_init(&dsc);
-        dsc.bg_color = col;
-        dsc.radius   = 0;
-        lv_draw_rect(layer, &dsc, &ba);
+            float mag          = d->bins[i];
+            float freq_frac    = (float)i / (float)(NUM_BARS - 1);
+            lv_coord_t bar_h_px = (lv_coord_t)(mag * (float)VIS_H);
+            if (bar_h_px < 1) bar_h_px = 1;
 
-        // Peak hold: 1px white dot
-        if (d->peak_hold[bin] > 0.01f) {
-            int32_t py = a.y2 - (int32_t)(d->peak_hold[bin] * (float)h);
-            lv_area_t pa = { a.x1 + (lv_coord_t)x, py,
-                             a.x1 + (lv_coord_t)x, py };
-            lv_draw_rect_dsc_t pdsc;
-            lv_draw_rect_dsc_init(&pdsc);
-            pdsc.bg_color = lv_color_hex(0xE8E8E8);
-            lv_draw_rect(layer, &pdsc, &pa);
-        }
-    }
-}
+            lv_color_t col = bin_to_color(mag, freq_frac);
 
-// LV_EVENT_DRAW_MAIN; draws smoothed[] as filled area chart with blue→cyan gradient.
-// Reuses x_to_bin() from Task 6 — must remain in same translation unit.
-static void spectrum_curve_draw(lv_event_t *e)
-{
-    auto *d     = static_cast<SpectrumScreenData*>(lv_event_get_user_data(e));
-    auto *layer = lv_event_get_layer(e);
-    auto *obj   = lv_event_get_target_obj(e);
-    lv_area_t a;
-    lv_obj_get_coords(obj, &a);
-    int32_t w = lv_area_get_width(&a);
-    int32_t h = lv_area_get_height(&a);
+            lv_area_t ba = {
+                (lv_coord_t)(area.x1 + x0),
+                (lv_coord_t)(vis_bot - bar_h_px),
+                (lv_coord_t)(area.x1 + x1),
+                vis_bot
+            };
+            lv_draw_rect_dsc_t dsc;
+            lv_draw_rect_dsc_init(&dsc);
+            dsc.bg_color = col;
+            dsc.radius   = 0;
+            lv_draw_rect(layer, &dsc, &ba);
 
-    // Very dark background — pure visualisation, luminance rule exempt
-    {
-        lv_draw_rect_dsc_t dsc;
-        lv_draw_rect_dsc_init(&dsc);
-        dsc.bg_color = lv_color_hex(0x050510);
-        dsc.radius   = 0;
-        lv_draw_rect(layer, &dsc, &a);
-    }
-
-    // Filled area: trapezoids between adjacent X columns
-    for (int x = 0; x < w - 1; x++) {
-        float mag0 = d->smoothed[x_to_bin(x,   w)];
-        float mag1 = d->smoothed[x_to_bin(x+1, w)];
-        float avg  = (mag0 + mag1) * 0.5f;
-
-        int32_t top = a.y2 - (int32_t)(std::max(mag0, mag1) * (float)h);
-        lv_area_t fa = { a.x1 + x, top, a.x1 + x + 1, a.y2 };
-
-        // Gradient: dark blue base → cyan/white at peak
-        lv_color_t col;
-        if (avg < 0.5f) {
-            col = lv_color_make(
-                (uint8_t)(0x1A * avg * 2),
-                (uint8_t)(0x3A * avg * 2),
-                (uint8_t)(0x8A + (uint8_t)(0x30 * avg * 2)));
-        } else {
-            float t = (avg - 0.5f) * 2.0f;
-            col = lv_color_make(
-                (uint8_t)(0x1A + (uint8_t)(0xD0 * t)),
-                (uint8_t)(0x3A + (uint8_t)(0x96 * t)),
-                (uint8_t)(0xBA + (uint8_t)(0x45 * t)));
+            // Peak-hold marker — 2px height, near-white
+            float pk = d->peak_hold[i];
+            if (pk > 0.01f) {
+                lv_coord_t py = vis_bot - (lv_coord_t)(pk * (float)VIS_H);
+                lv_area_t pa = {
+                    (lv_coord_t)(area.x1 + x0),
+                    (lv_coord_t)(py - 1),
+                    (lv_coord_t)(area.x1 + x1),
+                    py
+                };
+                lv_draw_rect_dsc_t pdsc;
+                lv_draw_rect_dsc_init(&pdsc);
+                pdsc.bg_color = lv_color_hex(0xF0F0F0);
+                pdsc.radius   = 0;
+                lv_draw_rect(layer, &pdsc, &pa);
+            }
         }
 
-        lv_draw_rect_dsc_t dsc;
-        lv_draw_rect_dsc_init(&dsc);
-        dsc.bg_color = col;
-        dsc.radius   = 0;
-        lv_draw_rect(layer, &dsc, &fa);
-    }
+    } else {
+        // ── WAVE / LINE CURVE MODE ────────────────────────────────────────────
+        // Draw green line segments between adjacent bar midpoints. No peak-hold.
 
-    // Bright top line (cyan)
-    {
         lv_draw_line_dsc_t dsc;
         lv_draw_line_dsc_init(&dsc);
-        dsc.color = lv_color_hex(0x70D0FF);
+        dsc.color = lv_color_hex(0x22C55E);
         dsc.width = 2;
-        for (int x = 0; x < w - 1; x++) {
-            dsc.p1.x = (lv_value_precise_t)(a.x1 + x);
-            dsc.p1.y = (lv_value_precise_t)(a.y2 - (int32_t)(d->smoothed[x_to_bin(x,   w)] * (float)h));
-            dsc.p2.x = (lv_value_precise_t)(a.x1 + x + 1);
-            dsc.p2.y = (lv_value_precise_t)(a.y2 - (int32_t)(d->smoothed[x_to_bin(x+1, w)] * (float)h));
+
+        for (int i = 0; i < NUM_BARS - 1; i++) {
+            lv_coord_t x0_mid = (lv_coord_t)(((float)i       + 0.5f) * (float)w / (float)NUM_BARS);
+            lv_coord_t x1_mid = (lv_coord_t)(((float)(i + 1) + 0.5f) * (float)w / (float)NUM_BARS);
+            lv_coord_t y0     = vis_bot - (lv_coord_t)(d->bins[i]     * (float)VIS_H);
+            lv_coord_t y1     = vis_bot - (lv_coord_t)(d->bins[i + 1] * (float)VIS_H);
+
+            dsc.p1.x = (lv_value_precise_t)(area.x1 + x0_mid);
+            dsc.p1.y = (lv_value_precise_t)y0;
+            dsc.p2.x = (lv_value_precise_t)(area.x1 + x1_mid);
+            dsc.p2.y = (lv_value_precise_t)y1;
             lv_draw_line(layer, &dsc);
         }
     }
-}
-// called from timer at ~30 Hz; shifts canvas RTL via memmove, writes new right column
-static void spectrum_wf_update(SpectrumScreenData *d)
-{
-    if (!d->wf_canvas || !d->wf_buf) return;
 
-    constexpr int WF_W = 800;
-    constexpr int WF_H = 388;
-    uint16_t *buf = static_cast<uint16_t*>(d->wf_buf);
+    // ── Frequency labels (bottom 52px of vis_area) ────────────────────────────
+    // Labels: 20Hz, 100, 1k, 5k, 10k, 20k — positioned by log-frequency mapping.
+    // The 64 bars span 20Hz–20kHz logarithmically.
+    // Bar index for frequency f: i = round((log(f/20) / log(1000)) * (NUM_BARS-1))
 
-    if (d->wf_rtl) {
-        // Shift all columns one pixel to the left (oldest data moves left and disappears)
-        for (int y = 0; y < WF_H; y++) {
-            memmove(&buf[y * WF_W], &buf[y * WF_W + 1], (WF_W - 1) * sizeof(uint16_t));
-        }
+    struct FreqLabel { const char *text; float freq; };
+    static const FreqLabel LABELS[] = {
+        {"20Hz", 20.0f},
+        {"100",  100.0f},
+        {"1k",   1000.0f},
+        {"5k",   5000.0f},
+        {"10k",  10000.0f},
+        {"20k",  20000.0f},
+    };
 
-        // Write new column on the right edge
-        // y=0 is top (high freq), y=WF_H-1 is bottom (low freq)
-        for (int y = 0; y < WF_H; y++) {
-            int bin = (int)((1.0f - (float)y / (float)(WF_H - 1)) * 255.0f);
-            bin = std::max(0, std::min(255, bin));
-            float mag = d->smoothed[bin];
-            int lut_idx = (int)(mag * 255.0f);
-            lut_idx = std::max(0, std::min(255, lut_idx));
-            lv_color_t col = s_lut[d->color_preset][lut_idx];
-            // Convert lv_color_t to RGB565
-            buf[y * WF_W + (WF_W - 1)] =
-                ((col.red >> 3) << 11) | ((col.green >> 2) << 5) | (col.blue >> 3);
-        }
+    lv_draw_label_dsc_t ldsc;
+    lv_draw_label_dsc_init(&ldsc);
+    ldsc.color = THEME_TEXT_HINT;
+    ldsc.font  = THEME_FONT_HINT;
+
+    for (const auto &lbl : LABELS) {
+        float log_ratio = logf(lbl.freq / 20.0f) / logf(20000.0f / 20.0f);
+        lv_coord_t lx   = (lv_coord_t)(log_ratio * (float)w);
+        // Clamp near edges to keep text readable
+        if (lx < 2)      lx = 2;
+        if (lx > w - 30) lx = (lv_coord_t)(w - 30);
+
+        lv_area_t la = {
+            (lv_coord_t)(area.x1 + lx),
+            label_y,
+            (lv_coord_t)(area.x1 + lx + 60),
+            (lv_coord_t)(label_y + 20)
+        };
+        ldsc.text = lbl.text;
+        lv_draw_label(layer, &ldsc, &la);
     }
-
-    lv_obj_invalidate(d->wf_canvas);
 }
 
-// Per-swatch user_data; carries pointer to screen data and the preset index.
-// Allocated when context menu is created; freed when swatch is tapped or menu is hidden.
-struct SwatchData { SpectrumScreenData *d; uint8_t preset; };
+// ── Cleanup ───────────────────────────────────────────────────────────────────
 
-// deletes ctx_menu overlay and cleans up SwatchData user_data
-static void spectrum_ctx_menu_hide(SpectrumScreenData *d)
+// IN:  LV_EVENT_DELETE on scr, user_data = SpectrumData*
+// OUT: timer deleted, s_data freed
+static void on_scr_delete(lv_event_t *e)
 {
-    if (!d->ctx_menu) return;
-    // Clean up SwatchData objects stored in each swatch child's user_data
-    uint32_t child_cnt = lv_obj_get_child_count(d->ctx_menu);
-    for (uint32_t i = 0; i < child_cnt; i++) {
-        lv_obj_t *child = lv_obj_get_child(d->ctx_menu, i);
-        auto *sw_data = static_cast<SwatchData*>(lv_obj_get_user_data(child));
-        if (sw_data) {
-            lv_obj_set_user_data(child, nullptr);
-            delete sw_data;
-        }
+    auto *d = static_cast<SpectrumData*>(lv_event_get_user_data(e));
+    if (!d) return;
+    if (d->timer) {
+        lv_timer_delete(d->timer);
+        d->timer = nullptr;
     }
-    lv_obj_delete(d->ctx_menu);
-    d->ctx_menu = nullptr;
-}
-
-// creates overlay on lv_layer_top; tapping swatch changes preset and closes menu
-static void spectrum_ctx_menu_show(SpectrumScreenData *d)
-{
-    if (d->ctx_menu) return;
-
-    lv_obj_t *menu = lv_obj_create(lv_layer_top());
-    lv_obj_set_size(menu, 320, 80);
-    lv_obj_align(menu, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(menu, lv_color_hex(0x686868), 0);
-    lv_obj_set_style_bg_opa(menu, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(menu, THEME_RADIUS, 0);
-    lv_obj_set_style_border_width(menu, 0, 0);
-    lv_obj_clear_flag(menu, LV_OBJ_FLAG_SCROLLABLE);
-    d->ctx_menu = menu;
-
-    // Representative midpoint colors for each gradient preset
-    static const uint32_t SWATCH_COLORS[4] = {0x0055AA, 0x30BC30, 0xC84000, 0xC020C0};
-
-    for (int i = 0; i < 4; i++) {
-        lv_obj_t *sw = lv_obj_create(menu);
-        lv_obj_set_size(sw, 60, 36);
-        lv_obj_set_pos(sw, 8 + i * 76, 22);
-        lv_obj_set_style_bg_color(sw, lv_color_hex(SWATCH_COLORS[i]), 0);
-        lv_obj_set_style_bg_opa(sw, LV_OPA_COVER, 0);
-        lv_obj_set_style_radius(sw, 4, 0);
-        lv_obj_set_style_border_color(sw, lv_color_hex(0xFFFFFF), 0);
-        lv_obj_set_style_border_width(sw, (d->color_preset == (uint8_t)i) ? 2 : 0, 0);
-        lv_obj_set_style_border_opa(sw, LV_OPA_COVER, 0);
-        lv_obj_clear_flag(sw, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_add_flag(sw, LV_OBJ_FLAG_CLICKABLE);
-
-        // Store d + preset in user_data struct; freed in spectrum_ctx_menu_hide
-        auto *sw_data = new SwatchData{d, (uint8_t)i};
-        lv_obj_set_user_data(sw, sw_data);
-        lv_obj_add_event_cb(sw, [](lv_event_t *ev) {
-            auto *sd = static_cast<SwatchData*>(lv_obj_get_user_data(lv_event_get_target_obj(ev)));
-            sd->d->color_preset = sd->preset;
-            spectrum_ctx_menu_hide(sd->d);
-        }, LV_EVENT_CLICKED, nullptr);
-    }
-
-    // Click-outside-to-close: handled by click on lv_layer_top background
-    lv_obj_add_event_cb(lv_layer_top(), [](lv_event_t *ev) {
-        auto *d2 = static_cast<SpectrumScreenData*>(lv_event_get_user_data(ev));
-        spectrum_ctx_menu_hide(d2);
-    }, LV_EVENT_CLICKED, d);
-}
-
-// ── Freeze icon helper ────────────────────────────────────────────────────────
-
-// Creates a small ❚❚ label in the top-right corner of parent screen.
-static lv_obj_t *make_freeze_icon(lv_obj_t *parent)
-{
-    lv_obj_t *lbl = lv_label_create(parent);
-    lv_label_set_text(lbl, LV_SYMBOL_PAUSE);
-    lv_obj_set_style_text_color(lbl, THEME_ACCENT, 0);
-    lv_obj_set_style_text_font(lbl, THEME_FONT_HINT, 0);
-    lv_obj_align(lbl, LV_ALIGN_TOP_RIGHT, -8, THEME_STATUSBAR_H + 4);
-    lv_obj_add_flag(lbl, LV_OBJ_FLAG_HIDDEN);
-    return lbl;
+    if (s_data == d) s_data = nullptr;
+    delete d;
+    ESP_LOGI(TAG, "spectrum screen deleted");
 }
 
 // ── Timer ─────────────────────────────────────────────────────────────────────
 
-// ~30 Hz tick: reads queue, smooths bins, handles BOOT button, updates active view.
-// IN:  lv_timer_t* with user_data = SpectrumScreenData*
-// OUT: none (side-effects: updates smoothed[], peak_hold[], invalidates canvas)
+// IN:  lv_timer_t* with user_data = SpectrumData*, fires every 33ms
+// OUT: bins[] updated from queue, peak_hold[] updated, vis_area invalidated
 static void spectrum_timer_cb(lv_timer_t *timer)
 {
-    auto *d = static_cast<SpectrumScreenData*>(lv_timer_get_user_data(timer));
+    auto *d = static_cast<SpectrumData*>(lv_timer_get_user_data(timer));
+    if (!d || !d->vis_area) return;
 
-    // Handle BOOT button event (set by ISR)
-    if (d->btn_event) {
-        d->btn_event = false;
-        if (d->btn_long) {
-            d->frozen = !d->frozen;
-            auto set_icon = [&](lv_obj_t *icon) {
-                if (icon) {
-                    d->frozen ? lv_obj_clear_flag(icon, LV_OBJ_FLAG_HIDDEN)
-                              : lv_obj_add_flag(icon, LV_OBJ_FLAG_HIDDEN);
-                }
-            };
-            set_icon(d->freeze_icon_bars);
-            set_icon(d->freeze_icon_curve);
-            set_icon(d->freeze_icon_wf);
-            ESP_LOGI(TAG, "Freeze: %s", d->frozen ? "ON" : "OFF");
-        } else {
-            // Short press: cycle views bars → curve → waterfall → bars
-            lv_obj_t *active = lv_screen_active();
-            if (active == d->scr_bars)        navigate_to_curve(d);
-            else if (active == d->scr_curve)  navigate_to_wf(d);
-            else                              navigate_to_bars(d);
-        }
-    }
-
-    if (d->frozen) return;
-
-    // Read latest audio packet and update smoothed[] bins
     AudioPacket pkt;
     if (xQueuePeek(g_audio_queue, &pkt, 0) == pdTRUE) {
-        constexpr float ALPHA = 0.35f;  // exponential MA — balances responsiveness and smoothness
-        for (int i = 0; i < 256; i++) {
-            d->smoothed[i] += ALPHA * (pkt.bins[i] - d->smoothed[i]);
-        }
-        // Update peak hold (bars view)
-        for (int i = 0; i < 256; i++) {
-            if (d->smoothed[i] > d->peak_hold[i]) {
-                d->peak_hold[i] = d->smoothed[i];
-                d->peak_hold_timer[i] = 2.0f;  // 2s freeze
-            } else if (d->peak_hold_timer[i] > 0) {
-                d->peak_hold_timer[i] -= 0.033f;
+        // Average 4 raw bins per display bar + exponential smoothing
+        for (int i = 0; i < NUM_BARS; i++) {
+            float avg = 0.0f;
+            for (int k = 0; k < BINS_PER_BAR; k++) {
+                avg += pkt.bins[i * BINS_PER_BAR + k];
+            }
+            avg /= (float)BINS_PER_BAR;
+            // EMA smoothing
+            d->bins[i] += SMOOTHING * (avg - d->bins[i]);
+
+            // Peak-hold logic (bars mode only but computed always)
+            if (d->bins[i] > d->peak_hold[i]) {
+                d->peak_hold[i]  = d->bins[i];
+                d->peak_timer[i] = PEAK_HOLD_S;
+            } else if (d->peak_timer[i] > 0.0f) {
+                d->peak_timer[i] -= DT;
             } else {
-                d->peak_hold[i] = std::max(d->peak_hold[i] - 0.033f * 0.5f, 0.0f);
+                d->peak_hold[i] = std::max(d->peak_hold[i] - PEAK_FALL_RATE * DT, 0.0f);
             }
         }
     }
-
-    // Invalidate whichever view is currently active
-    lv_obj_t *active = lv_screen_active();
-    if (active == d->scr_bars && d->bars_canvas)
-        lv_obj_invalidate(d->bars_canvas);
-    else if (active == d->scr_curve && d->curve_canvas)
-        lv_obj_invalidate(d->curve_canvas);
-    else if (active == d->scr_waterfall)
-        spectrum_wf_update(d);
+    // Always invalidate — if no data arrives, display stays at last known state
+    lv_obj_invalidate(d->vis_area);
 }
 
-// ── Back button callbacks ─────────────────────────────────────────────────────
+// ── Foot button callbacks ─────────────────────────────────────────────────────
 
-static void on_back_bars(lv_event_t *)    { navigate_back_home(); }
-static void on_back_curve(lv_event_t *)   { navigate_back_home(); }
-static void on_back_wf(lv_event_t *)      { navigate_back_home(); }
-
-// ── Screen + canvas creation helpers ─────────────────────────────────────────
-
-// Creates a themed screen with a Back button and a full-screen draw container.
-// IN:  back_cb    — LV_EVENT_CLICKED callback for Back button
-//      draw_cb    — LV_EVENT_DRAW_MAIN callback for canvas (may be nullptr)
-//      d          — shared screen data pointer, passed as user_data to draw_cb
-//      canvas_out — receives the created draw container (may be nullptr)
-//      icon_out   — receives the freeze icon label (may be nullptr)
-// OUT: new screen object (lv_obj_t*)
-static lv_obj_t *make_spectrum_screen(lv_event_cb_t back_cb,
-                                       lv_event_cb_t draw_cb,
-                                       SpectrumScreenData *d,
-                                       lv_obj_t **canvas_out,
-                                       lv_obj_t **icon_out)
+// IN:  LV_EVENT_CLICKED on Home button, user_data unused
+// OUT: cleans up spectrum screen, loads home
+static void on_home_btn(lv_event_t *e)
 {
-    lv_obj_t *scr = theme_make_screen();
+    (void)e;
+    if (!s_data) return;
 
-    // Full-screen draw area (below statusbar, above back button)
-    lv_obj_t *canvas = lv_obj_create(scr);
-    lv_obj_remove_style_all(canvas);
-    lv_obj_set_style_bg_opa(canvas, LV_OPA_TRANSP, 0);
-    lv_obj_clear_flag(canvas, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_size(canvas, 800, 480 - THEME_STATUSBAR_H - 60);
-    lv_obj_set_pos(canvas, 0, THEME_STATUSBAR_H);
-    if (draw_cb) lv_obj_add_event_cb(canvas, draw_cb, LV_EVENT_DRAW_MAIN, d);
-    if (canvas_out) *canvas_out = canvas;
+    // Stop timer before navigation to prevent use-after-free during animation
+    if (s_data->timer) {
+        lv_timer_delete(s_data->timer);
+        s_data->timer = nullptr;
+    }
 
-    // Back button
-    lv_obj_t *btn = lv_btn_create(scr);
-    lv_obj_set_size(btn, 100, 44);
-    lv_obj_align(btn, LV_ALIGN_BOTTOM_LEFT, 16, -16);
-    lv_obj_set_style_bg_color(btn, THEME_BG_CARD, 0);
-    lv_obj_add_event_cb(btn, back_cb, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t *lbl = lv_label_create(btn);
-    lv_label_set_text(lbl, LV_SYMBOL_LEFT " Home");
-    lv_obj_set_style_text_color(lbl, THEME_TEXT_PRIMARY, 0);
-    lv_obj_center(lbl);
-
-    // Freeze icon (top-right, hidden by default)
-    if (icon_out) *icon_out = make_freeze_icon(scr);
-
-    return scr;
+    lv_obj_t *home = home_screen_create();
+    // auto_del=true: LVGL deletes s_data->scr after animation; on_scr_delete fires
+    lv_screen_load_anim(home, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 200, 0, true);
 }
 
-// ── Lifecycle ─────────────────────────────────────────────────────────────────
-
-// LV_EVENT_DELETE callback for scr_bars only.
-// Performs full cleanup: timer, ISR handler, PSRAM waterfall buffer, data struct.
-// IN:  e — event with user_data = SpectrumScreenData*
-static void on_bars_delete(lv_event_t *e)
+// IN:  LV_EVENT_CLICKED on [BAR]/[WAVE] toggle button, user_data = SpectrumData*
+// OUT: toggles wave_mode, updates button label, invalidates vis_area
+static void on_mode_btn(lv_event_t *e)
 {
-    if (!s_data) return;  // already cleaned up by navigate_back_home()
-    auto *d = static_cast<SpectrumScreenData*>(lv_event_get_user_data(e));
-    // Only fully clean up if this is the last remaining spectrum screen
-    // (curve and waterfall may still be alive during animation)
-    // Full cleanup when timer is deleted (only once):
-    if (!d->timer) return;
-    lv_timer_delete(d->timer);
-    d->timer = nullptr;
-    boot_btn_deinit();
-    if (d->wf_buf) { heap_caps_free(d->wf_buf); d->wf_buf = nullptr; }
-    s_data = nullptr;
-    delete d;
+    auto *d = static_cast<SpectrumData*>(lv_event_get_user_data(e));
+    if (!d) return;
+    d->wave_mode = !d->wave_mode;
+    lv_label_set_text(d->mode_btn_lbl, d->wave_mode ? "WAVE" : "BAR");
+    lv_obj_invalidate(d->vis_area);
 }
 
-// ── Long-press handler for waterfall context menu ─────────────────────────────
+// ── Screen creation ───────────────────────────────────────────────────────────
 
-// Toggles the color-preset context menu on a long press of the waterfall canvas.
-static void on_wf_long_press(lv_event_t *e)
-{
-    auto *d = static_cast<SpectrumScreenData*>(lv_event_get_user_data(e));
-    if (d->ctx_menu) spectrum_ctx_menu_hide(d);
-    else             spectrum_ctx_menu_show(d);
-}
-
-// ── Public entry point ────────────────────────────────────────────────────────
-
-// Creates all three spectrum screens and the shared data struct.
-// Initialises the BOOT button ISR and the 30 Hz update timer.
-// Returns scr_bars (View 1); caller loads it with lv_screen_load() / lv_screen_load_anim().
-// Guard: if s_data != nullptr, returns the existing scr_bars immediately (no double-create).
+// IN:  nothing
+// OUT: fully built spectrum screen (not loaded — caller does lv_screen_load/anim)
+//      Idempotent: returns existing screen if called while one is alive.
 lv_obj_t *spectrum_screen_create()
 {
     if (s_data) {
-        // Already exists (shouldn't happen but guard anyway)
-        return s_data->scr_bars;
+        // Guard: already running (e.g. during animation)
+        return s_data->scr;
     }
 
-    // pre-computes 4×256 LUT at screen create time — fast per-pixel lookup during waterfall
-    init_color_luts();
+    auto *d     = new SpectrumData{};
+    d->wave_mode = false;
 
-    auto *d = new SpectrumScreenData{};
-    d->wf_rtl      = true;   // right-to-left default
-    d->color_preset = 0;     // Classic
+    // ── Screen root ───────────────────────────────────────────────────────────
+    lv_obj_t *scr = theme_make_screen();
+    d->scr = scr;
+    lv_obj_add_event_cb(scr, on_scr_delete, LV_EVENT_DELETE, d);
 
-    // Create three screens
-    d->scr_bars      = make_spectrum_screen(on_back_bars,  spectrum_bars_draw,  d, &d->bars_canvas,  &d->freeze_icon_bars);
-    d->scr_curve     = make_spectrum_screen(on_back_curve, spectrum_curve_draw, d, &d->curve_canvas, &d->freeze_icon_curve);
-    d->scr_waterfall = make_spectrum_screen(on_back_wf, nullptr, d, nullptr, &d->freeze_icon_wf);
+    // ── Content / Visualisation area (Y=32, H=392) ───────────────────────────
+    // Covers full content zone including freq-label strip at bottom.
+    lv_obj_t *vis = lv_obj_create(scr);
+    lv_obj_remove_style_all(vis);
+    lv_obj_clear_flag(vis, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_pos(vis, 0, CONTENT_Y);
+    lv_obj_set_size(vis, SCREEN_W, CONTENT_H);
+    lv_obj_add_event_cb(vis, spectrum_draw_cb, LV_EVENT_DRAW_MAIN, d);
+    d->vis_area = vis;
 
-    // Overlays werden NACH allen Canvas/Widget-Erstellungen eingefügt (höchste Z-Order)
+    // ── Foot bar (Y=424, H=56) ────────────────────────────────────────────────
+    lv_obj_t *foot = lv_obj_create(scr);
+    lv_obj_remove_style_all(foot);
+    lv_obj_clear_flag(foot, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_pos(foot, 0, FOOT_Y);
+    lv_obj_set_size(foot, SCREEN_W, FOOT_H);
+    lv_obj_set_style_bg_color(foot, lv_color_hex(0x4A4A4A), 0);
+    lv_obj_set_style_bg_opa(foot, LV_OPA_COVER, 0);
 
-    // Waterfall canvas: full width, height minus statusbar and back-button area (RGB565, PSRAM)
-    constexpr int WF_W = 800;
-    constexpr int WF_H = 388;  // 480 - 32 (statusbar) - 60 (back btn area)
-    size_t wf_size = WF_W * WF_H * sizeof(uint16_t);
-    d->wf_buf = heap_caps_malloc(wf_size, MALLOC_CAP_SPIRAM);
-    if (!d->wf_buf) d->wf_buf = malloc(wf_size);      // internal RAM fallback
-    if (d->wf_buf) memset(d->wf_buf, 0, wf_size);
+    // ← Home button (left side, 90×40px)
+    lv_obj_t *home_btn = lv_btn_create(foot);
+    lv_obj_set_size(home_btn, 90, 40);
+    lv_obj_align(home_btn, LV_ALIGN_LEFT_MID, 8, 0);
+    lv_obj_set_style_bg_color(home_btn, THEME_BG_CARD, 0);
+    lv_obj_set_style_bg_opa(home_btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(home_btn, THEME_RADIUS, 0);
+    lv_obj_set_style_border_width(home_btn, 0, 0);
+    lv_obj_set_style_shadow_width(home_btn, 0, 0);
+    lv_obj_add_event_cb(home_btn, on_home_btn, LV_EVENT_CLICKED, nullptr);
+    {
+        lv_obj_t *lbl = lv_label_create(home_btn);
+        lv_label_set_text(lbl, LV_SYMBOL_LEFT " Home");
+        lv_obj_set_style_text_color(lbl, THEME_TEXT_PRIMARY, 0);
+        lv_obj_set_style_text_font(lbl, THEME_FONT_HINT, 0);
+        lv_obj_center(lbl);
+    }
 
-    d->wf_canvas = lv_canvas_create(d->scr_waterfall);
-    lv_canvas_set_buffer(d->wf_canvas, d->wf_buf, WF_W, WF_H, LV_COLOR_FORMAT_RGB565);
-    lv_obj_set_pos(d->wf_canvas, 0, THEME_STATUSBAR_H);
+    // [BAR] / [WAVE] toggle button (right side, 90×40px)
+    lv_obj_t *mode_btn = lv_btn_create(foot);
+    lv_obj_set_size(mode_btn, 90, 40);
+    lv_obj_align(mode_btn, LV_ALIGN_RIGHT_MID, -8, 0);
+    lv_obj_set_style_bg_color(mode_btn, THEME_BG_CARD, 0);
+    lv_obj_set_style_bg_opa(mode_btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(mode_btn, THEME_RADIUS, 0);
+    lv_obj_set_style_border_width(mode_btn, 0, 0);
+    lv_obj_set_style_shadow_width(mode_btn, 0, 0);
+    lv_obj_add_event_cb(mode_btn, on_mode_btn, LV_EVENT_CLICKED, d);
+    {
+        lv_obj_t *lbl = lv_label_create(mode_btn);
+        lv_label_set_text(lbl, "BAR");
+        lv_obj_set_style_text_color(lbl, THEME_TEXT_PRIMARY, 0);
+        lv_obj_set_style_text_font(lbl, THEME_FONT_HINT, 0);
+        lv_obj_center(lbl);
+        d->mode_btn_lbl = lbl;
+    }
 
-    // Long-press on waterfall canvas opens/closes the color-preset context menu
-    lv_obj_add_flag(d->wf_canvas, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(d->wf_canvas, on_wf_long_press, LV_EVENT_LONG_PRESSED, d);
+    // ── Swipe right → Home ────────────────────────────────────────────────────
+    touch_nav_attach(scr, [](int dir, void *) {
+        if (dir > 0) {
+            // Swipe right = navigate to metering (left-side screen)
+            lv_obj_t *meter = metering_screen_create();
+            lv_screen_load_anim(meter, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 200, 0, true);
+        }
+    }, nullptr);
 
-    // Cleanup only on bars screen delete (first created, first destroyed on exit)
-    lv_obj_add_event_cb(d->scr_bars, on_bars_delete, LV_EVENT_DELETE, d);
-
-    // Transparente Swipe-Overlays — nach allen Canvas-Erstellungen → höchste Z-Order
-    static auto add_swipe = [](lv_obj_t *scr) {
-        lv_obj_t *swipe = lv_obj_create(scr);
-        lv_obj_remove_style_all(swipe);
-        lv_obj_set_size(swipe, LV_HOR_RES, LV_VER_RES - THEME_STATUSBAR_H);
-        lv_obj_set_pos(swipe, 0, THEME_STATUSBAR_H);
-        lv_obj_set_style_bg_opa(swipe, LV_OPA_TRANSP, 0);
-        lv_obj_clear_flag(swipe, LV_OBJ_FLAG_SCROLLABLE);
-        touch_nav_attach(swipe, [](int dir, void *) {
-            if (dir > 0) {
-                lv_screen_load_anim(metering_screen_create(), LV_SCR_LOAD_ANIM_MOVE_RIGHT, 250, 0, true);
-            }
-        }, nullptr);
-    };
-    add_swipe(d->scr_bars);
-    add_swipe(d->scr_curve);
-    add_swipe(d->scr_waterfall);
-
-    boot_btn_init(d);
-    d->timer = lv_timer_create(spectrum_timer_cb, 33, d);
+    // ── Timer: 30 Hz update ───────────────────────────────────────────────────
+    d->timer = lv_timer_create(spectrum_timer_cb, (uint32_t)TIMER_PERIOD_MS, d);
 
     s_data = d;
-    return d->scr_bars;  // caller loads this screen
+    ESP_LOGI(TAG, "spectrum screen created");
+    return scr;
 }

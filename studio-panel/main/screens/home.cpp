@@ -1,6 +1,8 @@
 #include "home.h"
 #include "theme.h"
 #include "screens/touch_nav.h"
+#include "screens/statusbar.h"
+#include "screens/foot.h"
 #include "screens/metering.h"
 #include "screens/studio_one.h"
 #include "screens/usb_midi.h"
@@ -37,16 +39,27 @@ lv_obj_t *home_screen_create()
 {
     lv_obj_t *scr = theme_make_screen();
 
+    statusbar_set_screen_name("HOME");
+
+    // Tile layout for Content area (Y=32..424, H=392):
+    // 3 cols × 256px + 2 gaps × 16px + 2 margins × 16px = 768+32 = 800 ✓
+    // 2 rows × 178px + 3 gaps × 12px = 356+36 = 392 ✓
+    constexpr int TILE_W      = 256;
+    constexpr int TILE_H      = 178;
+    constexpr int GAP_H       = 16;   // horizontal gap between tiles
+    constexpr int GAP_V       = 12;   // vertical gap (also used as top/bottom margin)
+    constexpr int LEFT_MARGIN = 16;   // left margin (= (800 - 3*256 - 2*16) / 2)
+
     for (int i = 0; i < 6; i++) {
         int col = i % 3;
         int row = i / 3;
 
-        int x = col * (THEME_TILE_W + THEME_TILE_GAP);
-        int y = THEME_STATUSBAR_H + THEME_TILE_GAP_V
-              + row * (THEME_TILE_H + THEME_TILE_GAP_V);
+        int x = LEFT_MARGIN + col * (TILE_W + GAP_H);
+        int y = THEME_CONTENT_Y + GAP_V
+              + row * (TILE_H + GAP_V);
 
         lv_obj_t *tile = lv_obj_create(scr);
-        lv_obj_set_size(tile, THEME_TILE_W, THEME_TILE_H);
+        lv_obj_set_size(tile, TILE_W, TILE_H);
         lv_obj_set_pos(tile, x, y);
         lv_obj_set_style_bg_color(tile, THEME_BG_CARD, 0);
         lv_obj_set_style_bg_color(tile, THEME_BG_CARD_HOVER, LV_STATE_PRESSED);
@@ -79,22 +92,19 @@ lv_obj_t *home_screen_create()
 
         lv_obj_add_event_cb(tile, on_tile_clicked, LV_EVENT_CLICKED,
                             const_cast<TileDef *>(&TILES[i]));
+        theme_apply_glow(tile);
     }
 
-    // Transparenter Overlay (letzte Child → höchste Z-Order) — fängt Swipes vor Tiles ab
-    {
-        lv_obj_t *swipe = lv_obj_create(scr);
-        lv_obj_remove_style_all(swipe);
-        lv_obj_set_size(swipe, LV_HOR_RES, LV_VER_RES - THEME_STATUSBAR_H);
-        lv_obj_set_pos(swipe, 0, THEME_STATUSBAR_H);
-        lv_obj_set_style_bg_opa(swipe, LV_OPA_TRANSP, 0);
-        lv_obj_clear_flag(swipe, LV_OBJ_FLAG_SCROLLABLE);
-        touch_nav_attach(swipe, [](int dir, void *) {
-            if (dir < 0) {
-                lv_screen_load_anim(metering_screen_create(), LV_SCR_LOAD_ANIM_MOVE_LEFT, 250, 0, true);
-            }
-        }, nullptr);
-    }
+    // Foot bar — Home button links, kein screen-spezifischer right_zone-Inhalt nötig
+    foot_create(scr);
+
+    // Swipe-Navigation direkt am Screen — Gesture-Events bubbeln von den Tiles hoch.
+    // Kein CLICKABLE-Overlay noetig (das wuerde Tile-Klicks blockieren).
+    touch_nav_attach(scr, [](int dir, void *) {
+        if (dir < 0) {
+            lv_screen_load_anim(metering_screen_create(), LV_SCR_LOAD_ANIM_MOVE_LEFT, 250, 0, true);
+        }
+    }, nullptr);
 
     return scr;
 }

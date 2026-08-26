@@ -1,6 +1,7 @@
 idf_component_register(
     SRCS
         "main.cpp"
+        "theme.cpp"
         "audio_data.cpp"
         "ch422g.cpp"
         "display.cpp"
@@ -21,6 +22,8 @@ idf_component_register(
         "screens/skin_digital.cpp"
         "screens/skin_vu.cpp"
         "screens/touch_nav.cpp"
+        "screens/gradient_test.cpp"
+        "screens/foot.cpp"
     INCLUDE_DIRS "."
     REQUIRES
         esp_driver_i2c

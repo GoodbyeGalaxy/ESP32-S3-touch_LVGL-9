@@ -18,8 +18,10 @@
 
 // ── RGB Datenpins [bit0..bit15] = B3–B7, G2–G7, R3–R7 ────────
 // Reihenfolge: LSB (B3) → MSB (R7) – so wie esp_lcd_rgb_panel_config_t.data_gpio_nums erwartet
+// HINWEIS: GPIO47/48 sind auf diesem Board als I2C reserviert (SDA/SCL) — daher an
+// Index 8/9 durch GPIO8/9 ersetzt (die vorher fälschlich als I2C konfiguriert waren).
 #define LCD_DATA_PINS  { 14, 38, 18, 17, 10, \
-                         39,  0, 45, 48, 47, 21, \
+                         39,  0, 45,  8,  9, 21, \
                           1,  2, 42, 41, 40 }
 
 // ── RGB Blanking-Timing ──────────────────────────────────────
@@ -33,8 +35,8 @@
 // ── I2C Bus (Touch + IO-Expander teilen denselben Bus) ────────
 // Neue I2C-Master-API (IDF 5.x): i2c_port_num_t (0 = I2C0)
 #define BSP_I2C_PORT  (0)
-#define BSP_I2C_SDA   GPIO_NUM_8
-#define BSP_I2C_SCL   GPIO_NUM_9
+#define BSP_I2C_SDA   GPIO_NUM_47
+#define BSP_I2C_SCL   GPIO_NUM_48
 #define BSP_I2C_FREQ  100000
 
 // ── GT911 Touch ──────────────────────────────────────────────
@@ -47,7 +49,7 @@
 // 0x38 = Datenregister (Output-Bits setzen)
 // Quelle: Waveshare ESP-IDF Demo 09_lvgl_v9_demo/components
 #define CH422G_OE_ADDR    0x24   // Output-Enable-Register
-#define CH422G_OUT_ADDR   0x38   // Output-Daten-Register
+#define CH422G_OUT_ADDR   0x10   // Output-Daten-Register (0x38 NACKt — 0x10 aus Scan)
 
 // Byte-Werte für das Datenregister (aus Waveshare-Demo übernommen)
 #define CH422G_VAL_BL_ON       0x1E  // Backlight + alle Resets released

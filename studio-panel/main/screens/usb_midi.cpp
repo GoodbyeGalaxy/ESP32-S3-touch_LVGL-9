@@ -2,7 +2,10 @@
 #include "theme.h"
 #include "screens/home.h"
 #include "screens/touch_nav.h"
+#include "screens/foot.h"
+#include "screens/statusbar.h"
 #include "lvgl.h"
+#include <cstdio>
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 
@@ -11,7 +14,7 @@ static constexpr int STRIP_PAD_X   = 20;   // left/right margin
 static constexpr int STRIP_W       = 90;   // 8×90 + 2×20 = 760 ≤ 800
 static constexpr int STRIP_GAP     = 5;    // gap between strips (unused — strips are flush)
 static constexpr int STRIP_TOP_Y   = 60;   // 32px statusbar + 28px breathing room
-static constexpr int STRIP_H       = 380;
+static constexpr int STRIP_H       = 340;  // 60+340=400 < 424 (foot at Y=424)
 
 static constexpr int BAR_W         = 18;
 static constexpr int BAR_H         = 220;
@@ -33,12 +36,6 @@ static const FaderDef FADERS[STRIP_COUNT] = {
 };
 
 // ── Navigation ────────────────────────────────────────────────────────────────
-
-static void on_back(lv_event_t *e)
-{
-    lv_obj_t *home = home_screen_create();
-    lv_screen_load_anim(home, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 250, 0, true);
-}
 
 // IN: direction (+1=fwd, -1=back), user_data unused. OUT: loads home on direction==-1.
 static void on_swipe(int direction, void *user_data)
@@ -64,6 +61,7 @@ static void create_fader(lv_obj_t *parent, const FaderDef &def, int x)
     lv_obj_set_style_bg_opa(strip, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(strip, 6, 0);
     lv_obj_clear_flag(strip, LV_OBJ_FLAG_SCROLLABLE);
+    theme_apply_glow(strip);
 
     // Value label at top (shows CC value 0–127)
     char val_buf[8];
@@ -111,6 +109,8 @@ lv_obj_t *usb_midi_screen_create()
 {
     lv_obj_t *scr = theme_make_screen();
 
+    statusbar_set_screen_name("USB MIDI");
+
     // Title (left-aligned, sits in statusbar zone)
     lv_obj_t *title = lv_label_create(scr);
     lv_label_set_text(title, "USB MIDI");
@@ -131,17 +131,18 @@ lv_obj_t *usb_midi_screen_create()
         create_fader(scr, FADERS[i], x);
     }
 
-    // Back button
-    lv_obj_t *btn = lv_btn_create(scr);
-    lv_obj_set_size(btn, 90, 36);
-    lv_obj_align(btn, LV_ALIGN_BOTTOM_LEFT, 16, -8);
-    lv_obj_set_style_bg_color(btn, THEME_BG_CARD, 0);
-    lv_obj_add_event_cb(btn, on_back, LV_EVENT_CLICKED, nullptr);
+    // Foot bar with Home button; add SEND CC placeholder in right_zone (Phase 5)
+    lv_obj_t *right_zone = foot_create(scr);
 
-    lv_obj_t *btn_label = lv_label_create(btn);
-    lv_label_set_text(btn_label, LV_SYMBOL_LEFT " Home");
-    lv_obj_set_style_text_color(btn_label, THEME_TEXT_PRIMARY, 0);
-    lv_obj_center(btn_label);
+    lv_obj_t *send_btn = lv_btn_create(right_zone);
+    lv_obj_set_size(send_btn, 100, 40);
+    lv_obj_align(send_btn, LV_ALIGN_RIGHT_MID, -8, 0);
+    lv_obj_set_style_bg_color(send_btn, THEME_BG_CARD, 0);
+    // Placeholder — no action yet (Phase 5: USB MIDI send)
+    lv_obj_t *send_lbl = lv_label_create(send_btn);
+    lv_label_set_text(send_lbl, "SEND CC");
+    lv_obj_set_style_text_color(send_lbl, THEME_TEXT_PRIMARY, 0);
+    lv_obj_center(send_lbl);
 
     // Swipe-right → Home
     touch_nav_attach(scr, on_swipe, nullptr);

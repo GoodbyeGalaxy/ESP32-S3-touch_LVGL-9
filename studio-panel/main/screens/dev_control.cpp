@@ -2,22 +2,16 @@
 #include "theme.h"
 #include "screens/home.h"
 #include "screens/touch_nav.h"
+#include "screens/foot.h"
+#include "screens/statusbar.h"
 #include "lvgl.h"
 #include "esp_chip_info.h"
-#include "esp_flash.h"
-#include "esp_psram.h"
 #include <cstdio>
 
 // Device diagnostics and control (Phase 4: JSON Profiles / SysEx).
 // Shows chip info and memory stats; profile/SysEx wiring comes in Phase 4.
 
 // ── Navigation ────────────────────────────────────────────────────────────────
-
-static void on_back(lv_event_t *e)
-{
-    lv_obj_t *home = home_screen_create();
-    lv_screen_load_anim(home, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 250, 0, true);
-}
 
 // IN: direction (+1=fwd, -1=back). OUT: loads home on back swipe.
 static void on_swipe(int direction, void *user_data)
@@ -68,6 +62,8 @@ lv_obj_t *dev_control_screen_create()
 {
     lv_obj_t *scr = theme_make_screen();
 
+    statusbar_set_screen_name("DEVICE CTRL");
+
     lv_obj_t *title = lv_label_create(scr);
     lv_label_set_text(title, "DEVICE CTRL");
     lv_obj_set_style_text_color(title, THEME_TEXT_PRIMARY, 0);
@@ -83,6 +79,7 @@ lv_obj_t *dev_control_screen_create()
     esp_chip_info(&chip);
 
     lv_obj_t *c_chip = make_card(scr, PAD, ROW1_Y, CW, CH, "CHIP");
+    theme_apply_glow(c_chip);
     make_row(c_chip, "ESP32-S3", THEME_FONT_LABEL, THEME_TEXT_PRIMARY, 12, 32);
 
     char core_buf[32];
@@ -92,40 +89,25 @@ lv_obj_t *dev_control_screen_create()
 
     // ── Memory card ───────────────────────────────────────────────────────────
     lv_obj_t *c_mem = make_card(scr, COL2_X, ROW1_Y, CW, CH, "MEMORY");
-
-    uint32_t flash_size = 0;
-    esp_flash_get_size(nullptr, &flash_size);
-    char flash_buf[32];
-    snprintf(flash_buf, sizeof(flash_buf), "Flash  %lu MB", (unsigned long)(flash_size >> 20));
-    make_row(c_mem, flash_buf, THEME_FONT_LABEL, THEME_TEXT_PRIMARY, 12, 32);
-
-    char psram_buf[32];
-    size_t psram_size = esp_psram_get_size();
-    snprintf(psram_buf, sizeof(psram_buf), "PSRAM  %zu MB", psram_size >> 20);
-    make_row(c_mem, psram_buf, THEME_FONT_HINT, THEME_TEXT_HINT, 12, 72);
+    theme_apply_glow(c_mem);
+    make_row(c_mem, "Flash  8 MB", THEME_FONT_LABEL, THEME_TEXT_PRIMARY, 12, 32);
+    make_row(c_mem, "PSRAM  8 MB", THEME_FONT_HINT, THEME_TEXT_HINT, 12, 72);
 
     // ── Profiles card ─────────────────────────────────────────────────────────
     lv_obj_t *c_prof = make_card(scr, PAD, ROW2_Y, CW, CH, "PROFILES");
+    theme_apply_glow(c_prof);
     make_row(c_prof, "JSON Profiles", THEME_FONT_LABEL, THEME_TEXT_PRIMARY, 12, 32);
     make_row(c_prof, "Phase 4 — NVS storage pending", THEME_FONT_HINT,
              THEME_TEXT_HINT, 12, 72);
 
     // ── SysEx card ────────────────────────────────────────────────────────────
     lv_obj_t *c_sx = make_card(scr, COL2_X, ROW2_Y, CW, CH, "SYSEX");
+    theme_apply_glow(c_sx);
     make_row(c_sx, "SysEx Monitor", THEME_FONT_LABEL, THEME_TEXT_PRIMARY, 12, 32);
     make_row(c_sx, "Phase 4 — USB MIDI pending", THEME_FONT_HINT,
              THEME_TEXT_HINT, 12, 72);
 
-    // Back button
-    lv_obj_t *btn = lv_btn_create(scr);
-    lv_obj_set_size(btn, 90, 36);
-    lv_obj_align(btn, LV_ALIGN_BOTTOM_LEFT, 16, -8);
-    lv_obj_set_style_bg_color(btn, THEME_BG_CARD, 0);
-    lv_obj_add_event_cb(btn, on_back, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t *btn_lbl = lv_label_create(btn);
-    lv_label_set_text(btn_lbl, LV_SYMBOL_LEFT " Home");
-    lv_obj_set_style_text_color(btn_lbl, THEME_TEXT_PRIMARY, 0);
-    lv_obj_center(btn_lbl);
+    foot_create(scr);
 
     touch_nav_attach(scr, on_swipe, nullptr);
 

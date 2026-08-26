@@ -18,28 +18,17 @@ void statusbar_init()
     s_bar = lv_obj_create(top);
     lv_obj_set_size(s_bar, LV_HOR_RES, THEME_STATUSBAR_H);
     lv_obj_set_pos(s_bar, 0, 0);
-    lv_obj_set_style_bg_color(s_bar, lv_color_hex(0x686868), 0);
+    lv_obj_set_style_bg_color(s_bar, THEME_STATUSBAR_BG, 0);
     lv_obj_set_style_bg_opa(s_bar, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(s_bar, 0, 0);
     lv_obj_set_style_pad_all(s_bar, 0, 0);
     lv_obj_clear_flag(s_bar, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Titel links
+    // Screen-Name links (dynamisch via statusbar_set_screen_name)
     s_title = lv_label_create(s_bar);
-    lv_label_set_text(s_title, "STUDIO PANEL");
+    lv_label_set_text(s_title, "");
     lv_obj_set_style_text_color(s_title, THEME_TEXT_TITLE, 0);
-    lv_obj_set_style_text_font(s_title, THEME_FONT_HINT, 0);
-    lv_obj_set_style_bg_color(s_title, lv_color_hex(0x484848), 0);
-    lv_obj_set_style_bg_opa(s_title, LV_OPA_80, 0);
-    lv_obj_set_style_radius(s_title, 5, 0);
-    lv_obj_set_style_pad_hor(s_title, 8, 0);
-    lv_obj_set_style_pad_ver(s_title, 2, 0);
-    lv_obj_set_style_shadow_width(s_title, 8, 0);
-    lv_obj_set_style_shadow_color(s_title, THEME_ACCENT, 0);
-    lv_obj_set_style_shadow_opa(s_title, LV_OPA_20, 0);
-    lv_obj_set_style_shadow_spread(s_title, 1, 0);
-    lv_obj_set_style_shadow_offset_x(s_title, 0, 0);
-    lv_obj_set_style_shadow_offset_y(s_title, 0, 0);
+    lv_obj_set_style_text_font(s_title, THEME_FONT_LABEL, 0);
     lv_obj_align(s_title, LV_ALIGN_LEFT_MID, 12, 0);
 
     // Build-Timestamp zentriert — Montserrat 18, gut lesbar für Deploy-Verifikation
@@ -54,26 +43,9 @@ void statusbar_init()
     lv_obj_set_style_text_align(s_build, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(s_build, LV_ALIGN_CENTER, 0, 0);
 
-    // Touch-Indikator — Pill, leuchtet hell bei Touch
-    s_touch_dot = lv_obj_create(s_bar);
-    lv_obj_remove_style_all(s_touch_dot);
-    lv_obj_set_size(s_touch_dot, 20, 20);
-    lv_obj_set_style_radius(s_touch_dot, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_opa(s_touch_dot, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(s_touch_dot, lv_color_hex(0x404040), 0);
-    lv_obj_align(s_touch_dot, LV_ALIGN_LEFT_MID, 170, 0);
-
-    // Touch-Poll alle 100ms — aktualisiert Dot-Farbe
-    lv_timer_create([](lv_timer_t *) {
-        esp_lcd_touch_handle_t h = touch_get_handle();
-        if (!h || !s_touch_dot) return;
-        esp_lcd_touch_read_data(h);
-        uint16_t x[1], y[1], strength[1];
-        uint8_t cnt = 0;
-        bool touched = esp_lcd_touch_get_coordinates(h, x, y, strength, &cnt, 1) && cnt > 0;
-        lv_obj_set_style_bg_color(s_touch_dot,
-            touched ? lv_color_hex(0x00FF00) : lv_color_hex(0x404040), 0);
-    }, 100, nullptr);
+    // Touch-Dot entfernt: esp_lcd_touch_read_data() im LVGL-Task blockiert ~600μs
+    // und lässt den LCD-Bounce-Buffer leerlaufen → Display-Drift.
+    // Touch wird vom esp_lvgl_adapter intern ohne zusätzlichen I2C-Read gehandhabt.
 
     // Zeit rechts
     s_time = lv_label_create(s_bar);
@@ -89,16 +61,19 @@ void statusbar_init()
     lv_obj_align(s_wifi, LV_ALIGN_RIGHT_MID, -60, 0);
 }
 
+void statusbar_set_screen_name(const char *name)
+{
+    if (!s_title || !name) return;
+    lv_label_set_text(s_title, name);
+}
+
 void statusbar_update_wifi(bool connected, const char *ip_str)
 {
     if (!s_wifi) return;
+    // Symbol only — green when connected, gray when not. No IP displayed.
     lv_obj_set_style_text_color(s_wifi,
-        connected ? THEME_ACCENT : THEME_TEXT_HINT, 0);
-    if (connected && ip_str) {
-        lv_label_set_text_fmt(s_wifi, LV_SYMBOL_WIFI " %s", ip_str);
-    } else if (!connected) {
-        lv_label_set_text(s_wifi, LV_SYMBOL_WIFI);
-    }
+        connected ? lv_color_hex(0x22C55Eu) : THEME_TEXT_HINT, 0);
+    lv_label_set_text(s_wifi, LV_SYMBOL_WIFI);
 }
 
 void statusbar_update_time(const char *time_str)
