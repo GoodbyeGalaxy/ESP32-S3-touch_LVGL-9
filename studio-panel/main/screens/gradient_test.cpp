@@ -3,6 +3,7 @@
 #include "screens/foot.h"
 #include "screens/statusbar.h"
 #include "lvgl.h"
+#include <cstdio>
 
 // Brightness calibration screen — 20 strips from V=0 to V=57 (HSV, S=0, H=0).
 // Identifies the minimum brightness before IPS green-tint appears.

@@ -9,6 +9,7 @@ idf_component_register(
         "ui.cpp"
         "wifi.cpp"
         "net_receiver.cpp"
+        "usb_midi_driver.cpp"
         "screens/home.cpp"
         "screens/statusbar.cpp"
         "screens/metering.cpp"

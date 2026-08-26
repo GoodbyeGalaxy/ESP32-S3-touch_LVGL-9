@@ -9,6 +9,7 @@
 #include "esp_lv_adapter.h"
 #include "audio_data.h"
 #include "wifi.h"
+#include "usb_midi_driver.h"
 
 static const char *TAG = "main";
 
@@ -32,7 +33,8 @@ extern "C" void app_main()
     g_audio_queue = xQueueCreate(1, sizeof(AudioPacket));
     configASSERT(g_audio_queue != nullptr);
 
-    wifi_init();   // non-blocking; net_receiver starts when IP assigned
+    wifi_init();        // non-blocking; net_receiver starts when IP assigned
+    usb_midi_driver_init(); // USB MIDI Class Device (TinyUSB, own task on Core 1)
     ui_init();
 
     ESP_LOGI(TAG, "Boot complete.");

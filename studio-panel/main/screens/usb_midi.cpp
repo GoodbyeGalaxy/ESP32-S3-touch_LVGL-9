@@ -4,6 +4,7 @@
 #include "screens/touch_nav.h"
 #include "screens/foot.h"
 #include "screens/statusbar.h"
+#include "usb_midi_driver.h"
 #include "lvgl.h"
 #include <cstdio>
 
@@ -35,10 +36,32 @@ static const FaderDef FADERS[STRIP_COUNT] = {
     {  7, "Volume", 100 },
 };
 
+// ── Module-level bar handles (populated by create_fader, used by on_send_cc) ─
+
+static lv_obj_t *s_bars[STRIP_COUNT] = {};
+
+// ── MIDI send button callback ─────────────────────────────────────────────────
+
+// Called from LVGL task (Core 0) — safe to call usb_midi_send_cc() directly
+// because its FIFO write is thread-safe inside TinyUSB.
+static void on_send_cc(lv_event_t *e)
+{
+    (void)e;
+    // MIDI channel 0 (= channel 1) for Nord Lead 2X
+    static constexpr uint8_t MIDI_CH = 0;
+
+    for (int i = 0; i < STRIP_COUNT; ++i) {
+        if (s_bars[i] == nullptr) continue;
+        const int32_t val = lv_bar_get_value(s_bars[i]);
+        usb_midi_send_cc(MIDI_CH, FADERS[i].cc,
+                         static_cast<uint8_t>(val & 0x7F));
+    }
+}
+
 // ── Navigation ────────────────────────────────────────────────────────────────
 
 // IN: direction (+1=fwd, -1=back), user_data unused. OUT: loads home on direction==-1.
-static void on_swipe(int direction, void *user_data)
+static void on_swipe(int direction, void * /*user_data*/)
 {
     if (direction == -1) {
         lv_obj_t *home = home_screen_create();
@@ -48,9 +71,10 @@ static void on_swipe(int direction, void *user_data)
 
 // ── Fader strip builder ───────────────────────────────────────────────────────
 
-// IN: parent scr, FaderDef, strip x position. OUT: creates strip with bar + labels on parent.
+// IN: parent scr, FaderDef, strip x position, index into s_bars[].
+// OUT: creates strip with bar + labels on parent; stores bar handle in s_bars[idx].
 // Bar range 0–127, initial value def.init. All colors ≥38% luminance (IPS rule).
-static void create_fader(lv_obj_t *parent, const FaderDef &def, int x)
+static void create_fader(lv_obj_t *parent, const FaderDef &def, int x, int idx)
 {
     // Strip background card
     lv_obj_t *strip = lv_obj_create(parent);
@@ -84,6 +108,9 @@ static void create_fader(lv_obj_t *parent, const FaderDef &def, int x)
     lv_obj_set_style_radius(bar, 3, 0);
     lv_obj_set_style_radius(bar, 3, LV_PART_INDICATOR);
 
+    // Store handle so on_send_cc() can read the current value
+    s_bars[idx] = bar;
+
     // CC number label (e.g. "CC 74")
     char cc_buf[8];
     snprintf(cc_buf, sizeof(cc_buf), "CC %d", def.cc);
@@ -107,6 +134,9 @@ static void create_fader(lv_obj_t *parent, const FaderDef &def, int x)
 // Swipe-right navigates home. Lifetime managed by LVGL.
 lv_obj_t *usb_midi_screen_create()
 {
+    // Reset bar handles — screen may be (re)created multiple times
+    for (int i = 0; i < STRIP_COUNT; ++i) s_bars[i] = nullptr;
+
     lv_obj_t *scr = theme_make_screen();
 
     statusbar_set_screen_name("USB MIDI");
@@ -125,24 +155,29 @@ lv_obj_t *usb_midi_screen_create()
     lv_obj_set_style_text_font(hint, THEME_FONT_HINT, 0);
     lv_obj_set_pos(hint, STRIP_PAD_X, 28);
 
-    // 8 CC fader strips
+    // 8 CC fader strips — pass index so s_bars[] gets populated
     for (int i = 0; i < STRIP_COUNT; ++i) {
-        int x = STRIP_PAD_X + i * STRIP_W;
-        create_fader(scr, FADERS[i], x);
+        const int x = STRIP_PAD_X + i * STRIP_W;
+        create_fader(scr, FADERS[i], x, i);
     }
 
-    // Foot bar with Home button; add SEND CC placeholder in right_zone (Phase 5)
+    // Foot bar with Home button; SEND CC button in right_zone
     lv_obj_t *right_zone = foot_create(scr);
 
     lv_obj_t *send_btn = lv_btn_create(right_zone);
-    lv_obj_set_size(send_btn, 100, 40);
+    lv_obj_set_size(send_btn, 120, 40);
     lv_obj_align(send_btn, LV_ALIGN_RIGHT_MID, -8, 0);
-    lv_obj_set_style_bg_color(send_btn, THEME_BG_CARD, 0);
-    // Placeholder — no action yet (Phase 5: USB MIDI send)
+    lv_obj_set_style_bg_color(send_btn, THEME_ACCENT, 0);
+    lv_obj_set_style_bg_color(send_btn, lv_color_hex(0x909090), LV_STATE_PRESSED);
+
     lv_obj_t *send_lbl = lv_label_create(send_btn);
     lv_label_set_text(send_lbl, "SEND CC");
     lv_obj_set_style_text_color(send_lbl, THEME_TEXT_PRIMARY, 0);
+    lv_obj_set_style_text_font(send_lbl, THEME_FONT_HINT, 0);
     lv_obj_center(send_lbl);
+
+    // Wire up click → MIDI CC send
+    lv_obj_add_event_cb(send_btn, on_send_cc, LV_EVENT_CLICKED, nullptr);
 
     // Swipe-right → Home
     touch_nav_attach(scr, on_swipe, nullptr);
