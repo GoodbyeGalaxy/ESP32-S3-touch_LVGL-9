@@ -5,7 +5,7 @@
 **Projekt-Skills:** `docs/skills/` — Schritt-für-Schritt-Workflows für wiederkehrende Aufgaben.
 - `docs/skills/flash-verify.md` — Flash + Verifikation (OPI-Flash meldet Erfolg auch bei Fehler!)
 
-Phase 0+1+2+3+4(Metering Pro)+Touch abgeschlossen. Nächstes Ziel: **Phase 5 (USB HID)** oder **VU-Meter Skin**.
+Phase 0+1+2+3+4(Metering Pro)+Touch+5(USB MIDI) abgeschlossen. Nächstes Ziel: **Phase 6 (Studio One WebSocket)**.
 
 ## Kurzübersicht
 
@@ -16,15 +16,17 @@ Phase 0+1+2+3+4(Metering Pro)+Touch abgeschlossen. Nächstes Ziel: **Phase 5 (US
 - **Serial-Port:** `/dev/ttyACM0` — `newgrp dialout` falls Permission denied
 - **WiFi-Credentials:** NUR in `studio-panel/sdkconfig.defaults.local` (gitignored) — NIEMALS in Kconfig.projbuild
 - **Audio-Script:** `tools/studio-panel-sender.py --host <ESP32-IP>` (Linux + macOS)
+- **GitHub Remote:** `origin` = `https://github.com/GoodbyeGalaxy/ESP32-S3-touch_LVGL-9.git`
 
-## Stand: ABGESCHLOSSEN (2026-08-23)
+## Stand: ABGESCHLOSSEN (2026-08-26)
 
 ✅ Phase 0: Display, LVGL, Hintergrundfarbe.
 ✅ Phase 1: Home Screen (6 Kacheln 3×2, Slide-Navigation, Statusleiste auf lv_layer_top).
 ✅ Phase 2: Metering Screen (L/R Balken, Goniometer/Lissajous, Loudness-History 60s EBU R128, Numerik I/S/M/Peak).
 ✅ Phase 3: WiFi + UDP (30Hz, 1072 Bytes), Metering mit echten Daten, Spectrum Screen (Balken/Kurve/Wasserfall, 4 Farbpresets, BOOT-Button Navigation).
 ✅ Phase 4 (Metering Pro): Engine/Skin-Architektur, Phosphor-Goniometer, Ballistic Modes (dBFS/VU/PPM I+II), Spectral Balance Strip, Fonts, IP in Statusbar.
-🎯 Nächstes Ziel: Phase 5 — USB HID (TinyUSB) oder Touch-Fix.
+✅ Phase 5 (USB MIDI): TinyUSB MIDI Class Device via `espressif/esp_tinyusb`. `usb_midi_driver.h/cpp` erstellt. SEND CC Button in `usb_midi.cpp` funktional.
+🎯 Nächstes Ziel: Phase 6 — Studio One WebSocket.
 
 **Dev-Workaround aktiv:** `ui.cpp` bootet direkt in Metering. Für Home-Screen: `home_screen_load()` in ui.cpp wiederherstellen.
 
@@ -32,13 +34,43 @@ Phase 0+1+2+3+4(Metering Pro)+Touch abgeschlossen. Nächstes Ziel: **Phase 5 (US
 
 **Alle Farben ≥ 38% Luminanz** — IPS-Panel zeigt darunter grünen Tint. Ausnahme: reine Visualisierungsflächen (Waterfall-Canvas, FFT-Kurve). Statusleiste: 0x686868, BG: 0x606060, Cards: 0x747474.
 
-## Offene Probleme (Stand: 2026-08-23)
+## Offene Probleme (Stand: 2026-08-26)
 
 1. **CH422G** antwortet nicht auf I2C (ESP_FAIL) — Backlight läuft über Hardware-Default. Kein Reset möglich, aber Touch läuft trotzdem (siehe unten).
 2. **GT911 FUNKTIONIERT** — initialisiert via Adress-Fallback (0x5D→0x14) ohne CH422G-Reset. touch.cpp probiert beide Adressen automatisch.
 3. **IPS-Panel Schwarzpunkt** — Grünlicher Tint unterhalb ~38% Luminanz. Minimale Hintergrundfarbe: `0x606060`. NIEMALS `0x0A0A0A` oder ähnlich dunkle Werte. **AUCH Canvas-Flächen betroffen** — Canvas-Hintergrund = `0x630C` (RGB565 von 0x606060), nicht 0x0000!
 4. **Drift (Bild verschiebt sich horizontal)** — PSRAM-Bandbreiten-Contention zwischen LCD-DMA und CPU-PSRAM-Zugriffen. Fix: `bounce_buffer_size_px = LCD_H_RES * 4` in display.cpp. Große PSRAM-Arrays in DRAM allozieren wenn möglich.
 5. **CH422G SDA stuck-low** — I2C-Bus physisch defekt. Nur Logikanalysator hilft. Backlight läuft über Hardware-Default ohne I2C.
+
+## sdkconfig.defaults — Vollständigkeit kritisch
+
+Nach `rm sdkconfig && idf.py build` werden **nur** Keys aus `sdkconfig.defaults` übernommen — fehlende Keys fallen auf ESP-IDF-Defaults zurück, was zu schwer debuggbaren Fehlern führt. Folgende Keys sind zwingend:
+
+```
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y          # default wäre 2MB → Flash-Fehler
+CONFIG_SPIRAM=y                            # ohne PSRAM → nur Backlight sichtbar
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
+CONFIG_SPIRAM_RODATA=y
+CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
+CONFIG_LV_FONT_MONTSERRAT_14=y
+CONFIG_LV_FONT_MONTSERRAT_24=y
+CONFIG_LV_FONT_UNSCII_16=y
+CONFIG_TINYUSB_MIDI_COUNT=1                # für Phase 5 USB MIDI
+```
+
+## TinyUSB / USB MIDI
+
+Komponentenname für CMakeLists.txt REQUIRES ist **nicht** `tinyusb`. Stattdessen via `idf_component.yml` einbinden:
+```yaml
+espressif/esp_tinyusb: "^1.1"
+```
+Nur `CONFIG_TINYUSB_MIDI_COUNT=1` in sdkconfig.defaults nötig. Kein manueller REQUIRES-Eintrag.
+
+## flash.sh — set -e + grep Bug
+
+`set -e` kombiniert mit `grep` ohne Treffer → exit code 1 → Script bricht ab. Fix: `|| true` am Ende jeder grep-Zeile im Script.
 
 ## Fonts (Stand 2026-08-24)
 

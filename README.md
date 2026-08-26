@@ -20,12 +20,12 @@ on a professional-looking dark UI.
 |---|---|
 | Board | Waveshare ESP32-S3-Touch-LCD-7 |
 | Display | 800 × 480 IPS, RGB parallel interface |
-| Touch | GT911 (capacitive, 5-point) via CH422G I/O expander |
+| Touch | GT911 (capacitive, 5-point), I2C address fallback 0x5D → 0x14 |
 | MCU | ESP32-S3 dual-core, 240 MHz |
-| Flash | 16 MB |
-| PSRAM | 8 MB OPI (octal) |
+| Flash | 16 MB OPI |
+| PSRAM | 8 MB OPI (octal, 80 MHz) |
 | Connectivity | Wi-Fi 2.4 GHz, BLE 5 |
-| USB | Single USB-C (native ESP32-S3 USB OTG) |
+| USB | Single USB-C (native ESP32-S3 USB OTG — used for USB MIDI) |
 
 ---
 
@@ -36,64 +36,45 @@ on a professional-looking dark UI.
 | Firmware | C++17 |
 | SDK | ESP-IDF v5.5 |
 | UI | LVGL 9.5 via `espressif/esp_lvgl_adapter ^0.5.2` |
-| Display driver | `esp_lcd_rgb_panel` (direct, no SPI) |
+| Display driver | `esp_lcd_rgb_panel` (direct parallel RGB) |
 | Touch driver | `espressif/esp_lcd_touch_gt911 ^1.1.0` |
+| USB MIDI | `espressif/esp_tinyusb ^1.1` (USB MIDI Class Device) |
 | Build | CMake (standard ESP-IDF) |
 
 ---
 
-## LVGL 9 on ESP32-S3 — What Works (and What Doesn't)
+## Current State
 
-This project specifically targets **LVGL 9.5**, not LVGL 8. The two versions
-are not API-compatible. Key pitfalls encountered during bring-up:
+| Phase | Description | Status |
+|---|---|---|
+| 0 | Display, LVGL, background color | ✅ Done |
+| 1 | Home screen (6 tiles, swipe navigation, statusbar on `lv_layer_top`) | ✅ Done |
+| 2 | Metering screen (L/R bars, goniometer, 60 s loudness history EBU R128, numerics) | ✅ Done |
+| 3 | WiFi + UDP audio stream (30 Hz) + Spectrum screen (bars / curve / waterfall) | ✅ Done |
+| 4 | Metering Pro: engine/skin architecture, phosphor goniometer, VU/PPM ballistics | ✅ Done |
+| Touch | GT911 via I2C address fallback, swipe navigation, touch indicator in statusbar | ✅ Done |
+| 5 | USB MIDI Class Device (TinyUSB) — CC output from USB MIDI screen | ✅ Done |
+| 6 | Studio One WebSocket integration | Planned |
+| 7 | Behringer WING OSC integration | Planned |
 
-### Component version pinning
-`espressif/esp_lvgl_port: "^2.4.0"` can pull in 2.9.0, which checks
-`SOC_LCDCAM_RGB_LCD_SUPPORTED` — a macro that does not exist on ESP32-S3
-(it uses `SOC_LCD_RGB_SUPPORTED`). Result: `lvgl_port_add_disp_rgb()` always
-returns NULL. Fix:
+---
 
-```yaml
-# idf_component.yml
-espressif/esp_lvgl_adapter: "^0.5.2"   # use the Waveshare-specific adapter
-```
+## Screens
 
-### LVGL task stack
-8 KB is not enough for LVGL 9 + RGB panel. The task starts silently and hangs.
+| Screen | Access | Description |
+|---|---|---|
+| **Home** | Boot | 6-tile grid, swipe left to navigate forward |
+| **Metering** | Swipe from Home | L/R bars, phosphor goniometer, loudness history, I/S/M/Peak numerics |
+| **Spectrum** | Swipe from Metering | Bars / FFT curve / waterfall, 4 color presets |
+| **Studio One** | Home tile | DAW transport mockup (BPM, position, play/stop) |
+| **USB MIDI** | Home tile | 8 CC faders (Nord Lead 2X), SEND CC via USB MIDI |
+| **Routing** | Home tile | WING mixer mockup, 8 channel strips |
+| **Settings** | Home tile | WiFi / audio / system / build info, live 1 Hz update |
+| **Dev Control** | Home tile | Developer tools |
+| **Gradient Test** | Settings → Gradient → | IPS brightness calibration (diagnostic) |
 
-```cpp
-cfg.task_stack_size = 16384;  // minimum for LVGL 9 on this board
-```
-
-### Default theme bleeds through
-Even after `lv_obj_remove_style_all()` the background shows PSRAM noise
-(green, `0x07E0` in RGB565). The fix is to disable the theme before any
-screen is created:
-
-```cpp
-lv_display_t *disp = esp_lv_adapter_register_display(&disp_cfg);
-lv_display_set_theme(disp, nullptr);           // disable theme first
-
-lv_obj_t *scr = lv_obj_create(nullptr);       // always create fresh screen
-lv_obj_set_style_bg_color(scr, color, 0);
-// ... add widgets ...
-lv_screen_load(scr);                          // load last
-```
-
-Never use `lv_screen_active()` as a parent — it carries theme padding that
-lets PSRAM artifacts show at the edges.
-
-### IPS panel black point
-This panel shows a greenish tint below approximately 38% luminance. All
-colors in the project are kept at or above `0x606060` for backgrounds.
-Do not use near-black values like `0x0A0A0A`.
-
-### CH422G I/O expander
-The CH422G does not respond reliably to standard I2C scanning. Backlight
-works via hardware default state even when software writes fail. Touch reset
-(GT911) routes through CH422G EXIO1, so GT911 is currently not initialized.
-**A logic analyzer is needed to debug this.** See
-[`docs/development-notes.md`](docs/development-notes.md) for details.
+All screens share a persistent statusbar (top 32 px on `lv_layer_top`) and a foot bar
+with a **← Home** button.
 
 ---
 
@@ -101,34 +82,42 @@ works via hardware default state even when software writes fail. Touch reset
 
 ```
 ESP32-S3/
-├── studio-panel/          ESP-IDF project
+├── studio-panel/           ESP-IDF project root
+│   ├── flash.sh            Flash script (OPI-Flash safe, with verify)
 │   ├── main/
-│   │   ├── main.cpp           Boot sequence
-│   │   ├── board.h            Pin definitions
-│   │   ├── audio_data.h/cpp   Shared AudioPacket struct + FreeRTOS queue
-│   │   ├── wifi.cpp/h         WiFi station, auto-reconnect
-│   │   ├── net_receiver.cpp/h UDP task (port 4210, xQueueOverwrite)
-│   │   ├── display.cpp        RGB panel init
-│   │   ├── touch.cpp          GT911 init (not yet working — CH422G issue)
-│   │   ├── ch422g.cpp         I/O expander (backlight + touch reset)
-│   │   ├── ui.cpp             LVGL init + screen launch
-│   │   ├── theme.h            Colors, fonts, geometry constants
-│   │   ├── Kconfig.projbuild  WiFi SSID/password configuration
+│   │   ├── main.cpp            Boot sequence
+│   │   ├── board.h             All GPIO pin definitions
+│   │   ├── theme.h/cpp         Colors, fonts, geometry — swap at runtime
+│   │   ├── ui.cpp              LVGL init + screen launch
+│   │   ├── display.cpp         RGB panel init (3 frame buffers in PSRAM)
+│   │   ├── touch.cpp           GT911 init (0x5D → 0x14 fallback)
+│   │   ├── ch422g.cpp          I/O expander (backlight, I2C scan)
+│   │   ├── wifi.cpp/h          WiFi station, auto-reconnect
+│   │   ├── net_receiver.cpp/h  UDP task (port 4210, xQueueOverwrite)
+│   │   ├── audio_data.h/cpp    Shared AudioPacket struct + FreeRTOS queue
+│   │   ├── usb_midi_driver.h/cpp  TinyUSB MIDI Class Device init + send_cc()
 │   │   └── screens/
-│   │       ├── home.cpp        6-tile home screen
-│   │       ├── statusbar.cpp   Persistent top bar on lv_layer_top
-│   │       ├── metering.cpp    Broadcast metering (bars/goniometer/history/numerics)
-│   │       ├── spectrum.cpp/h  Spectrum screen (bars/curve/waterfall)
-│   │       ├── studio_one.cpp  DAW control (planned)
-│   │       ├── usb_midi.cpp    USB MIDI (planned)
-│   │       ├── dev_control.cpp Device profiles (planned)
-│   │       └── settings.cpp    Configuration (planned)
+│   │       ├── home.cpp/h
+│   │       ├── statusbar.cpp/h
+│   │       ├── metering.cpp/h
+│   │       ├── meter_engine.cpp/h
+│   │       ├── skin_digital.cpp/h
+│   │       ├── skin_vu.cpp/h
+│   │       ├── spectrum.cpp/h
+│   │       ├── studio_one.cpp/h
+│   │       ├── usb_midi.cpp/h
+│   │       ├── routing.cpp/h
+│   │       ├── settings.cpp/h
+│   │       ├── dev_control.cpp/h
+│   │       ├── touch_nav.cpp/h
+│   │       ├── foot.cpp/h
+│   │       └── gradient_test.cpp/h
 ├── tools/
-│   ├── studio-panel-sender.py  Cross-platform UDP audio analysis script
+│   ├── studio-panel-sender.py  UDP audio analysis sender (Linux + macOS)
 │   └── requirements.txt
 ├── docs/
-│   ├── development-notes.md    Hard-won bring-up findings
-│   └── superpowers/            Design specs and implementation plans
+│   ├── development-notes.md    Critical bring-up findings (read this first)
+│   └── skills/                 Step-by-step workflows (flash-verify, etc.)
 └── README.md
 ```
 
@@ -140,75 +129,47 @@ ESP32-S3/
 # 1. Activate ESP-IDF (once per shell session)
 source ~/esp/esp-idf-5.5/export.sh
 
-# 2. Build
+# 2. Navigate to project
 cd studio-panel
+
+# 3. Build
 idf.py build
 
-# 3. Flash
-idf.py -p /dev/ttyACM0 flash
+# 4. Flash (use flash.sh — raw idf.py flash is unreliable on OPI flash)
+bash flash.sh
 
-# 4. Monitor
-idf.py -p /dev/ttyACM0 monitor
-# Exit: Ctrl+]
+# 5. Verify the right firmware is running
+timeout 8 idf.py -p /dev/ttyACM0 monitor 2>&1 | grep APP_BUILD
+# Expected: APP_BUILD=<date> <time>
 
 # If permission denied on /dev/ttyACM0:
 newgrp dialout
 ```
 
-> **First flash only:** If the board had other firmware, erase flash first:
-> ```bash
-> idf.py -p /dev/ttyACM0 erase-flash
-> idf.py -p /dev/ttyACM0 flash
-> ```
+> **OPI Flash warning:** `idf.py flash` reports success even when the write
+> fails silently on this board's OPI flash. Always use `flash.sh`, which runs
+> esptool with `--no-stub --verify`. Check `APP_BUILD` in the monitor output
+> to confirm the new firmware is actually running — **not** the bootloader
+> compile time (which never changes).
+
+> **sdkconfig:** Never commit `sdkconfig` — it contains local paths. All
+> required settings (PSRAM, flash size, fonts, TinyUSB) are in
+> `sdkconfig.defaults` which is committed.
 
 ---
 
-## Current State
+## USB MIDI
 
-| Phase | Description | Status |
-|---|---|---|
-| 0 | Display, LVGL, background color | ✅ Done |
-| 1 | Home screen (6 tiles, slide navigation, statusbar on `lv_layer_top`) | ✅ Done |
-| 2 | Metering screen (bars, goniometer, 60s loudness history EBU R128, numerics) | ✅ Done |
-| 3 | WiFi + UDP audio stream + Spectrum screen (bars / curve / waterfall) | ✅ Done |
-| 4 | USB HID (keyboard shortcuts → DAW) | Planned |
-| 5 | USB MIDI (CC/SysEx → synthesizers) | Planned |
-| 6 | Studio One WebSocket integration | Planned |
-| 7 | Behringer WING integration | Planned |
+The ESP32-S3 enumerates as a **USB MIDI 1.0 Class Device** via the native
+USB OTG port (USB-C connector). No driver needed on Linux/macOS/Windows 11.
 
-### Metering Screen
+On the **USB MIDI** screen, 8 fader strips map to MIDI CC values for the
+Nord Lead 2X. Press **SEND CC** to transmit all 8 current values on MIDI
+channel 1. The USB MIDI device appears as "Studio Panel MIDI".
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Status Bar                                    │
-├──────────┬──────────────────────────────────┬───────────────────┤
-│  L   R   │  Goniometer / Lissajous (250×250) │  I:  -14.2 LKFS  │
-│  ││  ││  │  (stereo correlation, M/S rotated) │  S:  -13.8 LKFS  │
-│  ││  ││  │                                   │  M:  -12.1 LKFS  │
-│          ├──────────────────────────────────┤  Peak: -5.9 dBFS │
-│          │  Short-term Loudness / 60 s       │                  │
-│          │  EBU R128 target: -23 LKFS ────  │                  │
-├──────────┴──────────────────────────────────┴───────────────────┤
-│ ◁ Home                                                          │
-└─────────────────────────────────────────────────────────────────┘
-```
+---
 
-Data source: `tools/studio-panel-sender.py` via WiFi/UDP (30 Hz, 1072-byte binary
-packet). Falls back to animated demo data when no UDP stream is active.
-
-### Spectrum Screen (Phase 3)
-
-Three views navigated by BOOT button (short press = next view):
-
-- **View 1 — Classic Analyzer**: 256 bars, log frequency scale (20 Hz–20 kHz),
-  amplitude gradient (dark green → yellow → red), peak-hold dots
-- **View 2 — FFT Curve**: filled area chart, blue/cyan gradient, bright top line
-- **View 3 — Waterfall**: right-to-left scrolling heatmap, 4 color presets
-  (Classic / Green / Warm / Purple) selectable via long-press context menu
-
-BOOT button long press (>1 s) freezes the display for analysis.
-
-### Companion Script
+## Companion Script
 
 ```bash
 pip install sounddevice numpy
@@ -216,21 +177,56 @@ python3 tools/studio-panel-sender.py --host <ESP32_IP>
 python3 tools/studio-panel-sender.py --list   # show audio devices
 ```
 
-Cross-platform: Linux (PipeWire/PulseAudio) and macOS (CoreAudio). Auto-detects
-system monitor source (what plays through your speakers).
+Streams real-time audio analysis (FFT, RMS, loudness, goniometer) to the
+panel via UDP on port 4210 at ~30 Hz. Cross-platform (Linux PipeWire/PulseAudio,
+macOS CoreAudio). Falls back to animated demo data when no stream is active.
+
+---
+
+## LVGL 9 on ESP32-S3 — Critical Pitfalls
+
+### Component adapter
+Use `espressif/esp_lvgl_adapter`, not `espressif/esp_lvgl_port`. The port
+adapter checks `SOC_LCDCAM_RGB_LCD_SUPPORTED` which doesn't exist on ESP32-S3.
+
+### Theme must be disabled
+```cpp
+lv_display_t *disp = esp_lv_adapter_register_display(&disp_cfg);
+lv_display_set_theme(disp, nullptr);  // must come before any screen creation
+```
+
+### Never use lv_screen_active() as parent
+Always create a fresh screen:
+```cpp
+lv_obj_t *scr = lv_obj_create(nullptr);
+lv_obj_remove_style_all(scr);
+// ... add content ...
+lv_screen_load(scr);
+```
+
+### IPS panel minimum brightness
+The panel shows a greenish tint below ~38% luminance. Minimum background:
+`0x606060`. This applies to canvas backgrounds too (`0x630C` in RGB565).
+
+### Frame buffers must be in PSRAM
+`cfg.flags.fb_in_psram = 1` — requires `CONFIG_SPIRAM=y` + `CONFIG_SPIRAM_MODE_OCT=y`
+in sdkconfig. Three frame buffers at 800×480×2 = ~2.3 MB total.
+
+### OPI Flash silent failures
+`idf.py flash` can report success while writing garbage. Use `flash.sh`.
 
 ---
 
 ## Known Issues
 
-1. **CH422G not responding** — I2C writes fail (`ESP_FAIL`). Backlight works
-   via hardware default. Touch reset through CH422G not possible → GT911
-   uninitialized. Needs logic analyzer to diagnose.
+1. **CH422G SDA stuck-low** — I2C bus physically degraded. Backlight runs
+   via hardware default. Needs logic analyzer to diagnose. Does not affect
+   touch (GT911 works via I2C address fallback without CH422G reset).
 
-2. **GT911 touch not initialized** — depends on CH422G reset (see above).
+2. **WiFi occasional connect failure** — auto-reconnect active, usually
+   connects within 5 s on retry.
 
-3. **IPS greenish tint below ~38% luminance** — all UI colors kept above
-   `0x606060`.
+3. **IPS greenish tint below 38% luminance** — all UI colors kept ≥ `0x606060`.
 
 ---
 
@@ -245,21 +241,20 @@ system monitor source (what plays through your speakers).
               ┌──────────────────┼──────────────────┐
               │                  │                  │
         ┌─────▼────┐      ┌──────▼─────┐    ┌──────▼─────┐
-        │  USB HID │      │  USB MIDI  │    │  Wi-Fi     │
-        │  (DAW    │      │  (CC/SysEx │    │  (OSC/WS/  │
-        │  macros) │      │  → synths) │    │  metering) │
-        └──────────┘      └────────────┘    └──────────┘
-                                 │
-                    ┌────────────┼────────────┐
-                    │            │            │
-             ┌──────▼──┐  ┌─────▼───┐  ┌────▼──────┐
-             │Studio One│  │  WING  │  │  mioXL   │
-             │  (DAW)  │  │(Mixer) │  │  (MIDI   │
-             └─────────┘  └────────┘  │  Router) │
-                                      └──────────┘
+        │  USB MIDI│      │   Wi-Fi    │    │  Future    │
+        │  CC/SysEx│      │  UDP/OSC/  │    │  USB HID   │
+        │  → synths│      │  WebSocket │    │  (macros)  │
+        └──────────┘      └─────┬──────┘    └────────────┘
+                                │
+                   ┌────────────┼────────────┐
+                   │            │            │
+            ┌──────▼──┐  ┌─────▼───┐  ┌────▼──────┐
+            │Studio One│  │  WING  │  │  mioXL   │
+            │  (DAW)  │  │(Mixer) │  │ (Router) │
+            └─────────┘  └────────┘  └──────────┘
 ```
 
-Target studio gear: Studio One, Behringer WING Rack, iConnectivity mioXL,
+Target gear: Studio One, Behringer WING Rack, iConnectivity mioXL,
 Nord Lead 2X, Nord Electro, Novation Bass Station, Novation DrumStation,
 Arturia KeyStep Pro, Arturia BeatStep Pro, MPC One+.
 
@@ -267,11 +262,10 @@ Arturia KeyStep Pro, Arturia BeatStep Pro, MPC One+.
 
 ## Design Goals
 
-- Dark studio aesthetic, not a smartphone app
+- Dark studio aesthetic — not a smartphone app
 - High contrast, minimal color palette
 - Large touch targets (≥ 44 px)
-- Smooth animations (LVGL `lv_screen_load_anim`)
-- Warning colors only when needed
+- Smooth swipe animations
 - Feels like a dedicated hardware device
 
 ---
