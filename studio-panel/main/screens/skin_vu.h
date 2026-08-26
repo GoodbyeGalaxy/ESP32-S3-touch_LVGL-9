@@ -14,6 +14,7 @@ private:
     struct PanelData {
         float db      = -20.0f;  // current needle position in dBFS (VU ballistics)
         const char *label = nullptr;  // "L" or "R", set in create()
+        bool peak = false;  // true when db >= 0.0f (set by update(), drives peak LED)
     };
 
     PanelData   left_data_;

@@ -29,7 +29,7 @@ void display_init(uint8_t num_fbs)
     cfg.data_width                   = 16;
     cfg.bits_per_pixel               = 16;
     cfg.num_fbs                      = num_fbs;
-    cfg.bounce_buffer_size_px        = LCD_H_RES * 4;  // 4 Lines SRAM-Buffer gegen PSRAM-DMA-Stalls (Drift)
+    cfg.bounce_buffer_size_px        = LCD_H_RES * 6;  // 6 Lines — Kompromiss: mehr Puffer ohne DRAM-Engpass
     cfg.psram_trans_align            = 64;
     cfg.hsync_gpio_num               = LCD_PIN_HSYNC;
     cfg.vsync_gpio_num               = LCD_PIN_VSYNC;

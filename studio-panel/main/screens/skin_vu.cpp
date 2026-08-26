@@ -3,6 +3,7 @@
 #include "esp_log.h"
 #include <cmath>
 #include <algorithm>
+#include <cstdio>
 
 static const char *TAG = "SkinVU";
 
@@ -51,7 +52,7 @@ static constexpr uint32_t COL_LABEL         = 0xE0E0E0u;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-// db is clamped to the physical stop positions so the needle never leaves the face.
+// IN: db in dBFS → OUT: angle_deg from vertical (neg=left, pos=right), clamped to physical stops
 static float db_to_angle(float db)
 {
     float c = std::max(SCALE_DB_MIN, std::min(SCALE_DB_MAX, db));
@@ -59,8 +60,7 @@ static float db_to_angle(float db)
     return ANGLE_AT_MIN + t * (ANGLE_AT_MAX - ANGLE_AT_MIN);
 }
 
-// Converts a polar offset (radius, angle from vertical) at the pivot to canvas XY.
-// "From vertical" means 0° points straight up → subtract from 90° for trig.
+// IN: polar (r px, angle_deg from vertical) at (origin_x, origin_y) → OUT: fills out_x, out_y in screen coords
 static void polar_xy(float r, float angle_deg,
                      lv_value_precise_t &out_x, lv_value_precise_t &out_y,
                      lv_coord_t origin_x, lv_coord_t origin_y)
@@ -72,6 +72,8 @@ static void polar_xy(float r, float angle_deg,
 
 // ── Draw callback ─────────────────────────────────────────────────────────────
 
+// LV_EVENT_DRAW_MAIN callback. Reads PanelData* from user_data. Draws bg, scale, needle, overlays.
+// Must NOT allocate heap or call lv_obj_* — only lv_draw_*.
 void SkinVU::panel_draw_cb(lv_event_t *e)
 {
     auto *data     = static_cast<PanelData*>(lv_event_get_user_data(e));
@@ -169,6 +171,38 @@ void SkinVU::panel_draw_cb(lv_event_t *e)
         }
     }
 
+    // ── "VU" face label ─────────────────────────────────────────────────────
+    {
+        lv_draw_label_dsc_t lbldsc;
+        lv_draw_label_dsc_init(&lbldsc);
+        lbldsc.color  = lv_color_hex(COL_TICK_NORMAL);
+        lbldsc.font   = &lv_font_montserrat_14;
+        lbldsc.align  = LV_TEXT_ALIGN_CENTER;
+        lbldsc.text   = "VU";
+        lv_area_t lbl_area = {
+            (lv_coord_t)(a.x1 + PIVOT_X - 20), (lv_coord_t)(a.y1 + PIVOT_Y - 190),
+            (lv_coord_t)(a.x1 + PIVOT_X + 20), (lv_coord_t)(a.y1 + PIVOT_Y - 172)
+        };
+        lv_draw_label(layer, &lbldsc, &lbl_area);
+    }
+
+    // ── Numeric dBVU readout ──────────────────────────────────────────────────
+    {
+        char num_buf[10];
+        snprintf(num_buf, sizeof(num_buf), "%+.1f", data->db);
+        lv_draw_label_dsc_t lbldsc;
+        lv_draw_label_dsc_init(&lbldsc);
+        lbldsc.color  = lv_color_hex(data->db >= 0.0f ? COL_NEEDLE : COL_TICK_NORMAL);
+        lbldsc.font   = &lv_font_unscii_16;
+        lbldsc.align  = LV_TEXT_ALIGN_CENTER;
+        lbldsc.text   = num_buf;
+        lv_area_t lbl_area = {
+            (lv_coord_t)(a.x1 + PIVOT_X - 30), (lv_coord_t)(a.y1 + PIVOT_Y - 170),
+            (lv_coord_t)(a.x1 + PIVOT_X + 30), (lv_coord_t)(a.y1 + PIVOT_Y - 150)
+        };
+        lv_draw_label(layer, &lbldsc, &lbl_area);
+    }
+
     // ── Needle ──────────────────────────────────────────────────────────────
     {
         float angle = db_to_angle(data->db);
@@ -198,6 +232,19 @@ void SkinVU::panel_draw_cb(lv_event_t *e)
         lv_draw_rect(layer, &dsc, &dot);
     }
 
+    // ── Peak LED (top-centre; red when ≥ 0 dBVU, dark otherwise) ────────────
+    {
+        lv_area_t dot = {
+            (lv_coord_t)(a.x1 + PIVOT_X - 8), (lv_coord_t)(a.y1 + 14),
+            (lv_coord_t)(a.x1 + PIVOT_X + 8), (lv_coord_t)(a.y1 + 30)
+        };
+        lv_draw_rect_dsc_t dsc;
+        lv_draw_rect_dsc_init(&dsc);
+        dsc.bg_color = lv_color_hex(data->peak ? 0xFF5555u : 0x707070u);
+        dsc.radius   = LV_RADIUS_CIRCLE;
+        lv_draw_rect(layer, &dsc, &dot);
+    }
+
     // ── Channel label (L / R) ────────────────────────────────────────────────
     if (data->label) {
         lv_draw_label_dsc_t lbldsc;
@@ -215,6 +262,7 @@ void SkinVU::panel_draw_cb(lv_event_t *e)
 
 // ── SkinVU::create_panel ──────────────────────────────────────────────────────
 
+// Builds one VU panel on parent at x. Attaches panel_draw_cb with data as user_data. Returns LVGL-owned object.
 lv_obj_t *SkinVU::create_panel(lv_obj_t *parent, lv_coord_t x, PanelData *data)
 {
     lv_obj_t *panel = lv_obj_create(parent);
@@ -232,6 +280,7 @@ lv_obj_t *SkinVU::create_panel(lv_obj_t *parent, lv_coord_t x, PanelData *data)
 
 // ── MeterSkin interface ───────────────────────────────────────────────────────
 
+// Lifecycle: called once after screen exists. Creates 2 LVGL panels on parent (LVGL-owned, freed on screen delete).
 void SkinVU::create(lv_obj_t *parent)
 {
     left_data_  = { SCALE_DB_MIN, "L" };
@@ -245,18 +294,22 @@ void SkinVU::create(lv_obj_t *parent)
     }
 }
 
+// Called at 30Hz from LVGL timer (task already locked). Copies vu_l/vu_r into panel data, marks both panels dirty.
 void SkinVU::update(const MeterReadings &r)
 {
     // Ballistics are applied by MeterEngine; this just pushes the current value
     // into each panel's state and schedules a redraw.  LVGL will call the draw
     // callback at the next frame — no manual erase/redraw loop needed.
-    left_data_.db  = r.vu_l;
-    right_data_.db = r.vu_r;
+    left_data_.db    = r.vu_l;
+    right_data_.db   = r.vu_r;
+    left_data_.peak  = (r.vu_l >= 0.0f);
+    right_data_.peak = (r.vu_r >= 0.0f);
 
     lv_obj_invalidate(left_panel_);
     lv_obj_invalidate(right_panel_);
 }
 
+// Called before screen delete. Nulls panel pointers. Panels freed by LVGL. No heap to release.
 void SkinVU::destroy()
 {
     // Panels are children of parent — LVGL owns and deletes them.

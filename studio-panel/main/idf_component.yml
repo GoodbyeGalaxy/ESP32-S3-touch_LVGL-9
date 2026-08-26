@@ -5,3 +5,4 @@ dependencies:
     public: true
   espressif/esp_lvgl_adapter: "^0.5.2"
   espressif/esp_lcd_touch_gt911: "^1.1.0"
+  espressif/esp_tinyusb: "^1.1"

@@ -1,47 +1,85 @@
 #pragma once
 #include "lvgl.h"
 
-// ── Farben ────────────────────────────────────────────────────
-// IPS-Panel Minimum: ≥38% Luminanz, sonst Grüntint sichtbar.
-// IPS-Hintergrund: empirisch bestätigtes Minimum — darunter dominiert Grüntint unabhängig
-// von Farbton-Kompensation (Magenta, Blau, Navy alle getestet, alle schlimmer als neutral).
-#define THEME_BG_HUE        0     // neutrales Grau — FINAL, alle Kompensationen getestet
-#define THEME_BG_SAT        0
-#define THEME_BG_BRIGHTNESS 38    // ≥38% = Panel-Minimum ohne IPS-Grüntint
-#define THEME_BG_PRIMARY    lv_color_hsv_to_rgb(THEME_BG_HUE, THEME_BG_SAT, THEME_BG_BRIGHTNESS)
-#define THEME_BG_CARD         lv_color_hex(0x747474)   // Kacheln / Cards
-#define THEME_BG_CARD_HOVER   lv_color_hex(0x888888)   // Pressed-State
-#define THEME_ACCENT          lv_color_hex(0x3B82F6)   // Primärfarbe (Blau)
-#define THEME_ACCENT_DIM      lv_color_hex(0x1E3A5F)   // Gedämpftes Akzent
-#define THEME_TEXT_PRIMARY    lv_color_hex(0xF0F0F0)   // Haupttext
-#define THEME_TEXT_TITLE      lv_color_hex(0xFFFFFF)   // Titel-Highlights — reines Weiß
-#define THEME_TEXT_SECONDARY  lv_color_hex(0x888888)   // Sekundärtext
-#define THEME_TEXT_HINT       lv_color_hex(0x909090)   // Hinweise — über 38% Luminanz (IPS-Grüntint-Grenze)
-#define THEME_SEPARATOR       lv_color_hex(0x707070)   // Trennlinien
+// ── Theme System ──────────────────────────────────────────────────────────────
+// Swap g_theme pointer at runtime to switch themes. All macros resolve at
+// runtime via the pointer — callers need no changes when switching themes.
 
-// ── Geometrie ─────────────────────────────────────────────────
-#define THEME_TILE_W          236    // Kachelbreite (3 × 236 + 2 × 36 = 800)
-#define THEME_TILE_H          196    // Kachelhöhe   (2 × 196 + 3 × 29 = 479)
-#define THEME_TILE_GAP        36     // Horizontaler Abstand
-#define THEME_TILE_GAP_V      29     // Vertikaler Abstand
-#define THEME_STATUSBAR_H     32     // Höhe der Statusleiste
-#define THEME_RADIUS          8      // Globaler Border-Radius
+struct ThemeColors {
+    lv_color_t bg_primary;      // screen background
+    lv_color_t bg_card;         // card / tile surface
+    lv_color_t bg_card_hover;   // card pressed state
+    lv_color_t accent;          // primary accent (also used for glow)
+    lv_color_t accent_dim;      // dimmed accent for inactive elements
+    lv_color_t text_primary;    // main text
+    lv_color_t text_title;      // titles / headings
+    lv_color_t text_secondary;  // secondary info
+    lv_color_t text_hint;       // subtle hints / labels
+    lv_color_t separator;       // divider lines
+    lv_color_t statusbar_bg;    // head bar background
+    lv_color_t foot_bg;         // foot bar background
+    // Glow / shadow applied by theme_apply_glow()
+    lv_color_t glow_color;
+    lv_opa_t   glow_opa;
+    int32_t    glow_width;
+    int32_t    glow_spread;
+};
 
-// ── Typografie ────────────────────────────────────────────────
-#define THEME_LETTER_SPACE_TITLE  2    // px zwischen Titelzeichen — verbessert Lesbarkeit
+// Active theme — swap via theme_set() to change themes at runtime.
+extern const ThemeColors *g_theme;
 
-// ── Fonts ─────────────────────────────────────────────────────
-// Montserrat 24: Titel — scharf ab dieser Größe
-// Montserrat 18: Textlabels — besser lesbar als 16px AA auf IPS
-// Montserrat 14: Hints/Sekundär
-// unscii_16: Zahlenwerte — pixel-perfect, kein AA-Bleeding auf RGB565
+// IN: non-null pointer to a static-lifetime ThemeColors. OUT: switches active theme.
+void theme_set(const ThemeColors *t);
+
+// Predefined themes
+extern const ThemeColors THEME_DARK_GLOW;
+
+// ── Color macros (syntax unchanged in all callers) ────────────────────────────
+#define THEME_BG_PRIMARY      (g_theme->bg_primary)
+#define THEME_BG_CARD         (g_theme->bg_card)
+#define THEME_BG_CARD_HOVER   (g_theme->bg_card_hover)
+#define THEME_ACCENT          (g_theme->accent)
+#define THEME_ACCENT_DIM      (g_theme->accent_dim)
+#define THEME_TEXT_PRIMARY    (g_theme->text_primary)
+#define THEME_TEXT_TITLE      (g_theme->text_title)
+#define THEME_TEXT_SECONDARY  (g_theme->text_secondary)
+#define THEME_TEXT_HINT       (g_theme->text_hint)
+#define THEME_SEPARATOR       (g_theme->separator)
+#define THEME_STATUSBAR_BG    (g_theme->statusbar_bg)
+#define THEME_FOOT_BG         (g_theme->foot_bg)
+
+// ── Glow helper ───────────────────────────────────────────────────────────────
+// Applies the active theme's glow/shadow to an LVGL object.
+// Call on cards, tiles, accent buttons — NOT on display canvases.
+static inline void theme_apply_glow(lv_obj_t *obj)
+{
+    lv_obj_set_style_shadow_color(obj,  g_theme->glow_color,  0);
+    lv_obj_set_style_shadow_width(obj,  g_theme->glow_width,  0);
+    lv_obj_set_style_shadow_spread(obj, g_theme->glow_spread, 0);
+    lv_obj_set_style_shadow_opa(obj,    g_theme->glow_opa,    0);
+}
+
+// ── Geometry ──────────────────────────────────────────────────────────────────
+#define THEME_TILE_W          236
+#define THEME_TILE_H          196
+#define THEME_TILE_GAP        36
+#define THEME_TILE_GAP_V      29
+#define THEME_STATUSBAR_H     32
+#define THEME_FOOT_H          56
+#define THEME_FOOT_Y          (480 - THEME_FOOT_H)
+#define THEME_CONTENT_Y       THEME_STATUSBAR_H
+#define THEME_CONTENT_H       (THEME_FOOT_Y - THEME_STATUSBAR_H)
+#define THEME_RADIUS          8
+
+// ── Typography ────────────────────────────────────────────────────────────────
+#define THEME_LETTER_SPACE_TITLE  2
 #define THEME_FONT_TITLE      (&lv_font_montserrat_24)
 #define THEME_FONT_LABEL      (&lv_font_montserrat_18)
 #define THEME_FONT_HINT       (&lv_font_montserrat_14)
 #define THEME_FONT_NUM        (&lv_font_unscii_16)
 
-// ── Helper: neuen Screen mit Dark-Background erstellen ────────
-// Gibt IMMER lv_obj_create(nullptr) zurück — nie lv_screen_active() verwenden.
+// ── Screen helper ─────────────────────────────────────────────────────────────
+// Always use lv_obj_create(nullptr) — never lv_screen_active().
 static inline lv_obj_t *theme_make_screen()
 {
     lv_obj_t *scr = lv_obj_create(nullptr);

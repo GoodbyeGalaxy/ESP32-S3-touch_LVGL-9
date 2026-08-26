@@ -6,6 +6,8 @@
 #include "theme.h"
 #include "screens/home.h"
 #include "screens/touch_nav.h"
+#include "screens/statusbar.h"
+#include "screens/foot.h"
 #include "screens/spectrum.h"
 #include "lvgl.h"
 #include "driver/gpio.h"
@@ -106,19 +108,16 @@ static void on_screen_delete(lv_event_t *e)
     delete d;
 }
 
-static void on_back(lv_event_t *e)
-{
-    lv_obj_t *home = home_screen_create();
-    lv_screen_load_anim(home, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 250, 0, true);
-}
-
 lv_obj_t *metering_screen_create()
 {
     auto *d  = new MeteringScreenData{};
-    d->skin  = make_skin(0);
+    d->skin_idx = 1;
+    d->skin  = make_skin(1);
 
     lv_obj_t *scr = theme_make_screen();
     lv_obj_add_event_cb(scr, on_screen_delete, LV_EVENT_DELETE, d);
+
+    statusbar_set_screen_name("METERING");
 
     // Transparent full-screen container — lets lv_obj_clean() swap skins safely
     d->skin_container = lv_obj_create(scr);
@@ -130,31 +129,26 @@ lv_obj_t *metering_screen_create()
 
     d->skin->create(d->skin_container);
 
-    // Transparenter Swipe-Overlay — NACH skin_container hinzugefügt (höhere Z-Order),
-    // VOR den Buttons. Fängt Swipes auf, ohne Skin-Widgets-Klicks zu stören.
-    // Skin-Widgets sind CLICKABLE und absorbieren sonst PRESSED/RELEASED.
-    {
-        lv_obj_t *swipe = lv_obj_create(scr);
-        lv_obj_remove_style_all(swipe);
-        lv_obj_set_size(swipe, LV_HOR_RES, LV_VER_RES - THEME_STATUSBAR_H);
-        lv_obj_set_pos(swipe, 0, THEME_STATUSBAR_H);
-        lv_obj_set_style_bg_opa(swipe, LV_OPA_TRANSP, 0);
-        lv_obj_clear_flag(swipe, LV_OBJ_FLAG_SCROLLABLE);
-        touch_nav_attach(swipe, [](int dir, void *) {
-            if (dir > 0) {
-                lv_screen_load_anim(home_screen_create(), LV_SCR_LOAD_ANIM_MOVE_RIGHT, 250, 0, true);
-            } else {
-                lv_screen_load_anim(spectrum_screen_create(), LV_SCR_LOAD_ANIM_MOVE_LEFT, 250, 0, true);
-            }
-        }, nullptr);
-    }
+    // Swipe-Navigation direkt am Screen — Gesture-Events bubbeln von Skin-Widgets/Buttons hoch.
+    // Kein CLICKABLE-Overlay noetig (das wuerde sonst Button-Klicks blockieren).
+    touch_nav_attach(scr, [](int dir, void *) {
+        if (dir > 0) {
+            lv_screen_load_anim(home_screen_create(), LV_SCR_LOAD_ANIM_MOVE_RIGHT, 250, 0, true);
+        } else {
+            lv_screen_load_anim(spectrum_screen_create(), LV_SCR_LOAD_ANIM_MOVE_LEFT, 250, 0, true);
+        }
+    }, nullptr);
 
-    // Skin-Switch Button (unten rechts) — Touch-Aktion, Sibling des skin_container
+    // Foot bar — Home-Button links, Skin-Toggle rechts
     {
-        lv_obj_t *sbtn = lv_btn_create(scr);
-        lv_obj_set_size(sbtn, 80, 44);
-        lv_obj_align(sbtn, LV_ALIGN_BOTTOM_RIGHT, -16, -16);
+        lv_obj_t *right = foot_create(scr);
+
+        // VU / DIGITAL Toggle-Button im right_zone
+        lv_obj_t *sbtn = lv_btn_create(right);
+        lv_obj_set_size(sbtn, 90, 40);
+        lv_obj_align(sbtn, LV_ALIGN_RIGHT_MID, -8, 0);
         lv_obj_set_style_bg_color(sbtn, THEME_BG_CARD, 0);
+        lv_obj_set_style_bg_color(sbtn, THEME_BG_CARD_HOVER, LV_STATE_PRESSED);
         lv_obj_add_event_cb(sbtn, [](lv_event_t *e) {
             auto *d = static_cast<MeteringScreenData*>(lv_event_get_user_data(e));
             d->skin->destroy();
@@ -170,17 +164,6 @@ lv_obj_t *metering_screen_create()
         lv_obj_set_style_text_color(d->skin_btn_lbl, THEME_TEXT_PRIMARY, 0);
         lv_obj_center(d->skin_btn_lbl);
     }
-
-    // Back button — sibling of skin_container, not affected by lv_obj_clean
-    lv_obj_t *btn = lv_btn_create(scr);
-    lv_obj_set_size(btn, 100, 44);
-    lv_obj_align(btn, LV_ALIGN_BOTTOM_LEFT, 16, -16);
-    lv_obj_set_style_bg_color(btn, THEME_BG_CARD, 0);
-    lv_obj_add_event_cb(btn, on_back, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t *lbl = lv_label_create(btn);
-    lv_label_set_text(lbl, LV_SYMBOL_LEFT " Home");
-    lv_obj_set_style_text_color(lbl, THEME_TEXT_PRIMARY, 0);
-    lv_obj_center(lbl);
 
     metering_boot_init(d);
     d->timer = lv_timer_create(metering_timer_cb, 33, d);
