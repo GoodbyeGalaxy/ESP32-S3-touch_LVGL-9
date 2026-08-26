@@ -57,6 +57,10 @@ static inline void theme_apply_glow(lv_obj_t *obj)
     lv_obj_set_style_shadow_width(obj,  g_theme->glow_width,  0);
     lv_obj_set_style_shadow_spread(obj, g_theme->glow_spread, 0);
     lv_obj_set_style_shadow_opa(obj,    g_theme->glow_opa,    0);
+    // Pressed state: accent border flash
+    lv_obj_set_style_border_color(obj, g_theme->accent, LV_STATE_PRESSED);
+    lv_obj_set_style_border_width(obj, 2, LV_STATE_PRESSED);
+    lv_obj_set_style_border_opa(obj, LV_OPA_COVER, LV_STATE_PRESSED);
 }
 
 // ── Geometry ──────────────────────────────────────────────────────────────────

@@ -6,6 +6,7 @@
 #include "theme.h"
 #include "screens/home.h"
 #include "screens/touch_nav.h"
+#include "screens/nav_controller.h"
 #include "screens/statusbar.h"
 #include "screens/foot.h"
 #include "screens/spectrum.h"
@@ -17,7 +18,7 @@
 
 static const char *TAG __attribute__((unused)) = "metering";
 
-// Registered skins in cycling order.
+// Registered skins in cycling order: DIGITAL → STUDIO
 static constexpr int SKIN_COUNT = 2;
 
 struct MeteringScreenData {
@@ -40,8 +41,8 @@ struct MeteringScreenData {
 static std::unique_ptr<MeterSkin> make_skin(int idx)
 {
     switch (idx) {
-        case 1:  return std::make_unique<SkinVU>();
-        default: return std::make_unique<SkinDigital>();
+        case 1:  return std::make_unique<SkinVU>();      // STUDIO (dark backlit)
+        default: return std::make_unique<SkinDigital>(); // DIGITAL (bars/goniometer)
     }
 }
 
@@ -111,8 +112,8 @@ static void on_screen_delete(lv_event_t *e)
 lv_obj_t *metering_screen_create()
 {
     auto *d  = new MeteringScreenData{};
-    d->skin_idx = 1;
-    d->skin  = make_skin(1);
+    d->skin_idx = 0;
+    d->skin  = make_skin(0);
 
     lv_obj_t *scr = theme_make_screen();
     lv_obj_add_event_cb(scr, on_screen_delete, LV_EVENT_DELETE, d);
@@ -129,14 +130,10 @@ lv_obj_t *metering_screen_create()
 
     d->skin->create(d->skin_container);
 
-    // Swipe-Navigation direkt am Screen — Gesture-Events bubbeln von Skin-Widgets/Buttons hoch.
-    // Kein CLICKABLE-Overlay noetig (das wuerde sonst Button-Klicks blockieren).
-    touch_nav_attach(scr, [](int dir, void *) {
-        if (dir > 0) {
-            lv_screen_load_anim(home_screen_create(), LV_SCR_LOAD_ANIM_MOVE_RIGHT, 250, 0, true);
-        } else {
-            lv_screen_load_anim(spectrum_screen_create(), LV_SCR_LOAD_ANIM_MOVE_LEFT, 250, 0, true);
-        }
+    // 2D Swipe-Navigation — routes through nav_controller.
+    // BOOT-Button ISR (skin cycling within SkinDigital) is unaffected.
+    touch_nav_attach_2d(scr, [](int dir_h, int dir_v, void *) {
+        nav_swipe(dir_h, dir_v);
     }, nullptr);
 
     // Foot bar — Home-Button links, Skin-Toggle rechts

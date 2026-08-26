@@ -1,12 +1,13 @@
 #include "foot.h"
 #include "theme.h"
 #include "screens/home.h"
+#include "screens/nav_controller.h"
 #include "lvgl.h"
 
 static void on_home(lv_event_t *e)
 {
-    lv_obj_t *home = home_screen_create();
-    lv_screen_load_anim(home, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 250, 0, true);
+    (void)e;
+    nav_go_home();
 }
 
 // IN: scr. OUT: foot bar on scr + ← Home button. Returns right_zone for screen actions.

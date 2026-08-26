@@ -2,6 +2,7 @@
 #include "theme.h"
 #include "screens/home.h"
 #include "screens/touch_nav.h"
+#include "screens/nav_controller.h"
 #include "screens/foot.h"
 #include "screens/statusbar.h"
 #include "usb_midi_driver.h"
@@ -60,13 +61,10 @@ static void on_send_cc(lv_event_t *e)
 
 // ── Navigation ────────────────────────────────────────────────────────────────
 
-// IN: direction (+1=fwd, -1=back), user_data unused. OUT: loads home on direction==-1.
-static void on_swipe(int direction, void * /*user_data*/)
+// IN: dir_h, dir_v from 2D swipe. OUT: delegates to nav_controller.
+static void on_swipe(int dir_h, int dir_v, void * /*user_data*/)
 {
-    if (direction == -1) {
-        lv_obj_t *home = home_screen_create();
-        lv_screen_load_anim(home, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 250, 0, true);
-    }
+    nav_swipe(dir_h, dir_v);
 }
 
 // ── Fader strip builder ───────────────────────────────────────────────────────
@@ -179,8 +177,8 @@ lv_obj_t *usb_midi_screen_create()
     // Wire up click → MIDI CC send
     lv_obj_add_event_cb(send_btn, on_send_cc, LV_EVENT_CLICKED, nullptr);
 
-    // Swipe-right → Home
-    touch_nav_attach(scr, on_swipe, nullptr);
+    // 2D swipe → nav_controller
+    touch_nav_attach_2d(scr, on_swipe, nullptr);
 
     return scr;
 }

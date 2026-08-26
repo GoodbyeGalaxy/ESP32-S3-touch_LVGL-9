@@ -23,6 +23,7 @@ idf_component_register(
         "screens/skin_digital.cpp"
         "screens/skin_vu.cpp"
         "screens/touch_nav.cpp"
+        "screens/nav_controller.cpp"
         "screens/gradient_test.cpp"
         "screens/foot.cpp"
     INCLUDE_DIRS "."

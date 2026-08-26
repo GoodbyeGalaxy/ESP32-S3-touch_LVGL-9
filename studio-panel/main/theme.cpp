@@ -6,9 +6,9 @@
 // With corrected LCD pins (GPIO8/9) the actual minimum may be lower — verify
 // via gradient test screen if green tint appears.
 const ThemeColors THEME_DARK_GLOW = {
-    /* bg_primary     */ lv_color_hex(0x0D1117u),   // deep dark (GitHub Dark)
+    /* bg_primary     */ lv_color_hex(0x0A0A0Au),   // deep black (IPS minimum confirmed safe)
     /* bg_card        */ lv_color_hex(0x161B22u),   // card surface
-    /* bg_card_hover  */ lv_color_hex(0x21262Du),   // pressed card
+    /* bg_card_hover  */ lv_color_hex(0x1F4070u),   // pressed card — dim accent blue
     /* accent         */ lv_color_hex(0x58A6FFu),   // bright blue
     /* accent_dim     */ lv_color_hex(0x1F4070u),   // dim blue
     /* text_primary   */ lv_color_hex(0xE6EDF3u),   // near-white
@@ -17,7 +17,7 @@ const ThemeColors THEME_DARK_GLOW = {
     /* text_hint      */ lv_color_hex(0x6E7681u),   // subtle
     /* separator      */ lv_color_hex(0x30363Du),   // dark divider
     /* statusbar_bg   */ lv_color_hex(0x161B22u),   // head bar
-    /* foot_bg        */ lv_color_hex(0x0D1117u),   // foot bar
+    /* foot_bg        */ lv_color_hex(0x0A0A0Au),   // foot bar
     /* glow_color     */ lv_color_hex(0x58A6FFu),   // blue glow
     /* glow_opa       */ LV_OPA_30,
     /* glow_width     */ 12,

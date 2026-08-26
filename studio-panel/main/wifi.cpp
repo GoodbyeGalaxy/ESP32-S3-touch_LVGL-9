@@ -5,6 +5,7 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_sntp.h"
 #include "nvs_flash.h"
 #include "lvgl.h"
 #include <atomic>
@@ -44,6 +45,14 @@ static void wifi_event_handler(void *arg, esp_event_base_t base,
         if (ip_buf) snprintf(ip_buf, 16, IPSTR, IP2STR(&event->ip_info.ip));
         lv_async_call(wifi_statusbar_async, ip_buf);
         net_receiver_start();  // safe to call multiple times — idempotent
+        // Start SNTP time sync (idempotent — safe to call again on reconnect)
+        if (!esp_sntp_enabled()) {
+            setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1);
+            tzset();
+            esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+            esp_sntp_setservername(0, "pool.ntp.org");
+            esp_sntp_init();
+        }
     }
 }
 
@@ -89,3 +98,23 @@ void wifi_init()
 
 // Reads atomic flag set by IP_EVENT handler — safe from any task/ISR context.
 bool wifi_is_connected() { return s_connected.load(); }
+
+void wifi_get_ip(char *buf, size_t len)
+{
+    if (!s_connected.load()) { snprintf(buf, len, "--"); return; }
+    esp_netif_t *netif = esp_netif_get_default_netif();
+    if (!netif) { snprintf(buf, len, "--"); return; }
+    esp_netif_ip_info_t info;
+    if (esp_netif_get_ip_info(netif, &info) == ESP_OK) {
+        snprintf(buf, len, IPSTR, IP2STR(&info.ip));
+    } else {
+        snprintf(buf, len, "--");
+    }
+}
+
+void wifi_reconnect()
+{
+    if (!s_connected.load()) {
+        esp_wifi_connect();
+    }
+}

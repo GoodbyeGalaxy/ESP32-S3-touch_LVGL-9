@@ -24,6 +24,15 @@ struct SwipeState {
     bool          active;
 };
 
+struct Swipe2DState {
+    SwipeCallback2D cb;
+    void           *user_data;
+    int             min_px;
+
+    lv_point_t      start;
+    bool            active;
+};
+
 struct LongPressState {
     LongPressCallback cb;
     void             *user_data;
@@ -34,8 +43,8 @@ struct LongPressState {
     bool              fired;      // long-press already fired for this press
 };
 
-// Registry entries — either a swipe or a long-press state is stored per (obj, kind).
-enum class Kind : uint8_t { Swipe, LongPress };
+// Registry entries — a swipe, swipe2d, or long-press state per (obj, kind).
+enum class Kind : uint8_t { Swipe, Swipe2D, LongPress };
 struct Entry {
     lv_obj_t *obj;
     Kind      kind;
@@ -52,6 +61,8 @@ static void free_entry(const Entry &e)
 {
     if (e.kind == Kind::Swipe) {
         delete static_cast<SwipeState *>(e.state);
+    } else if (e.kind == Kind::Swipe2D) {
+        delete static_cast<Swipe2DState *>(e.state);
     } else {
         auto *lp = static_cast<LongPressState *>(e.state);
         if (lp->timer) { lv_timer_delete(lp->timer); lp->timer = nullptr; }
@@ -62,6 +73,8 @@ static void free_entry(const Entry &e)
 // Forward declarations
 static void swipe_event_cb(lv_event_t *e);
 static void swipe_delete_cb(lv_event_t *e);
+static void swipe2d_event_cb(lv_event_t *e);
+static void swipe2d_delete_cb(lv_event_t *e);
 static void long_press_event_cb(lv_event_t *e);
 static void long_press_delete_cb(lv_event_t *e);
 static void long_press_timer_cb(lv_timer_t *t);
@@ -138,6 +151,79 @@ static void swipe_delete_cb(lv_event_t *e)
     lv_obj_t *obj = lv_event_get_current_target_obj(e);
     auto it = std::find_if(s_registry.begin(), s_registry.end(),
                            [&](const Entry &x) { return x.obj == obj && x.kind == Kind::Swipe; });
+    if (it != s_registry.end()) {
+        free_entry(*it);
+        s_registry.erase(it);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Swipe2D: gesture (primary) + PRESSED/RELEASED fallback, both axes
+// ---------------------------------------------------------------------------
+
+// IN: LVGL event on the attached obj (PRESSED/RELEASED/GESTURE).
+// OUT: fires cb(dir_h, 0) for horizontal gesture, cb(0, dir_v) for vertical.
+// Fallback: on RELEASED, whichever axis has larger displacement (if > min_px) fires.
+static void swipe2d_event_cb(lv_event_t *e)
+{
+    auto *state = static_cast<Swipe2DState *>(lv_event_get_user_data(e));
+    if (!state) return;
+
+    lv_event_code_t code = lv_event_get_code(e);
+    lv_indev_t *indev    = lv_indev_active();
+    if (!indev) return;
+
+    if (code == LV_EVENT_GESTURE) {
+        lv_dir_t dir = lv_indev_get_gesture_dir(indev);
+
+        int dir_h = 0, dir_v = 0;
+        if      (dir == LV_DIR_LEFT)  dir_h = -1;
+        else if (dir == LV_DIR_RIGHT) dir_h =  1;
+        else if (dir == LV_DIR_TOP)   dir_v = -1;  // swipe up = finger moves top
+        else if (dir == LV_DIR_BOTTOM) dir_v =  1; // swipe down = finger moves bottom
+
+        if ((dir_h != 0 || dir_v != 0) && state->cb) {
+            state->cb(dir_h, dir_v, state->user_data);
+        }
+        state->active = false;
+        return;
+    }
+
+    // Fallback: track raw touch for when gesture recognition isn't available.
+    if (code == LV_EVENT_PRESSED) {
+        lv_point_t pt;
+        lv_indev_get_point(indev, &pt);
+        state->start  = pt;
+        state->active = true;
+    }
+    else if (code == LV_EVENT_RELEASED) {
+        if (!state->active) return;
+        state->active = false;
+
+        lv_point_t pt;
+        lv_indev_get_point(indev, &pt);
+
+        int32_t dx  = (int32_t)pt.x - (int32_t)state->start.x;
+        int32_t dy  = (int32_t)pt.y - (int32_t)state->start.y;
+        int32_t adx = dx < 0 ? -dx : dx;
+        int32_t ady = dy < 0 ? -dy : dy;
+
+        if (adx > ady && adx >= state->min_px) {
+            int dir_h = (dx > 0) ? 1 : -1;
+            if (state->cb) state->cb(dir_h, 0, state->user_data);
+        } else if (ady > adx && ady >= state->min_px) {
+            int dir_v = (dy > 0) ? 1 : -1;
+            if (state->cb) state->cb(0, dir_v, state->user_data);
+        }
+    }
+}
+
+// IN: LV_EVENT_DELETE on obj. OUT: removes swipe2d entry from registry, frees state.
+static void swipe2d_delete_cb(lv_event_t *e)
+{
+    lv_obj_t *obj = lv_event_get_current_target_obj(e);
+    auto it = std::find_if(s_registry.begin(), s_registry.end(),
+                           [&](const Entry &x) { return x.obj == obj && x.kind == Kind::Swipe2D; });
     if (it != s_registry.end()) {
         free_entry(*it);
         s_registry.erase(it);
@@ -234,6 +320,32 @@ void touch_nav_attach(lv_obj_t *obj, SwipeCallback cb, void *user_data, int min_
     s_registry.push_back({obj, Kind::Swipe, state});
 }
 
+void touch_nav_attach_2d(lv_obj_t *obj, SwipeCallback2D cb, void *user_data, int min_px)
+{
+    if (!obj) return;
+
+    // Detach any prior 2D swipe to avoid duplicate registrations.
+    for (const auto &e : s_registry) {
+        if (e.obj == obj && e.kind == Kind::Swipe2D) { touch_nav_detach(obj); break; }
+    }
+
+    auto *state = new Swipe2DState();
+    state->cb        = cb;
+    state->user_data = user_data;
+    state->min_px    = min_px;
+    state->active    = false;
+    state->start     = {0, 0};
+
+    lv_obj_add_flag(obj, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_add_event_cb(obj, swipe2d_event_cb, LV_EVENT_GESTURE,  state);
+    lv_obj_add_event_cb(obj, swipe2d_event_cb, LV_EVENT_PRESSED,  state);
+    lv_obj_add_event_cb(obj, swipe2d_event_cb, LV_EVENT_RELEASED, state);
+    lv_obj_add_event_cb(obj, swipe2d_delete_cb, LV_EVENT_DELETE,  state);
+
+    s_registry.push_back({obj, Kind::Swipe2D, state});
+}
+
 void touch_nav_attach_long_press(lv_obj_t *obj, LongPressCallback long_cb,
                                  void *user_data, uint32_t threshold_ms)
 {
@@ -283,6 +395,8 @@ void touch_nav_detach(lv_obj_t *obj)
     // (we've registered each fn potentially multiple times per obj across kinds).
     lv_obj_remove_event_cb(obj, swipe_event_cb);
     lv_obj_remove_event_cb(obj, swipe_delete_cb);
+    lv_obj_remove_event_cb(obj, swipe2d_event_cb);
+    lv_obj_remove_event_cb(obj, swipe2d_delete_cb);
     lv_obj_remove_event_cb(obj, long_press_event_cb);
     lv_obj_remove_event_cb(obj, long_press_delete_cb);
 

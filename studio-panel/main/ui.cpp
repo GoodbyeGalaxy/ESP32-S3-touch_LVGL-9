@@ -5,11 +5,26 @@
 #include "screens/home.h"
 #include "screens/metering.h"
 #include "screens/statusbar.h"
+#include "screens/nav_controller.h"
 #include "esp_lv_adapter.h"
 #include "lvgl.h"
 #include "esp_log.h"
+#include <time.h>
 
 static const char *TAG = "ui";
+
+static void time_tick_cb(lv_timer_t *)
+{
+    time_t now;
+    time(&now);
+    struct tm t;
+    localtime_r(&now, &t);
+    if (t.tm_year > 70) {  // synced (year > 1970)
+        char buf[6];
+        snprintf(buf, sizeof(buf), "%02d:%02d", t.tm_hour, t.tm_min);
+        statusbar_update_time(buf);
+    }
+}
 
 void ui_init()
 {
@@ -46,7 +61,9 @@ void ui_init()
 
     if (esp_lv_adapter_lock(-1) == ESP_OK) {
         statusbar_init();
+        nav_init();
         home_screen_load();
+        lv_timer_create(time_tick_cb, 1000, nullptr);
         esp_lv_adapter_unlock();
     } else {
         ESP_LOGE(TAG, "Failed to acquire LVGL lock");

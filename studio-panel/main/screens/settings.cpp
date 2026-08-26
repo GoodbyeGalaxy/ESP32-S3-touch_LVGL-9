@@ -2,6 +2,7 @@
 #include "theme.h"
 #include "screens/home.h"
 #include "screens/touch_nav.h"
+#include "screens/nav_controller.h"
 #include "screens/gradient_test.h"
 #include "screens/foot.h"
 #include "screens/statusbar.h"
@@ -28,6 +29,7 @@ static constexpr int COL2_X   = PAD + CARD_W + PAD;      // 410
 struct SettingsData {
     lv_obj_t   *wifi_dot    = nullptr;
     lv_obj_t   *wifi_status = nullptr;
+    lv_obj_t   *wifi_ip     = nullptr;
     lv_obj_t   *audio_dot   = nullptr;
     lv_obj_t   *audio_mode  = nullptr;
     lv_obj_t   *audio_seq   = nullptr;
@@ -47,6 +49,9 @@ static void settings_timer_cb(lv_timer_t *t)
     lv_obj_set_style_bg_color(d->wifi_dot,
         lv_color_hex(connected ? 0x3B82F6u : 0x707070u), 0);
     lv_label_set_text(d->wifi_status, connected ? "Connected" : "Disconnected");
+    char ip_str[18];
+    wifi_get_ip(ip_str, sizeof(ip_str));
+    lv_label_set_text(d->wifi_ip, ip_str);
 
     // Audio queue: peek latest packet (non-destructive)
     AudioPacket pkt{};
@@ -79,12 +84,10 @@ static void on_delete(lv_event_t *e)
 
 // ── Navigation ────────────────────────────────────────────────────────────────
 
-static void on_swipe(int direction, void *user_data)
+// IN: dir_h, dir_v from 2D swipe. OUT: delegates to nav_controller.
+static void on_swipe(int dir_h, int dir_v, void * /*user_data*/)
 {
-    if (direction == -1) {
-        lv_obj_t *home = home_screen_create();
-        lv_screen_load_anim(home, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 250, 0, true);
-    }
+    nav_swipe(dir_h, dir_v);
 }
 
 // ── Widget helpers ────────────────────────────────────────────────────────────
@@ -157,7 +160,26 @@ lv_obj_t *settings_screen_create()
     theme_apply_glow(c_wifi);
     d->wifi_dot    = make_dot(c_wifi, 12, 36);
     d->wifi_status = make_label(c_wifi, "...", THEME_FONT_LABEL, THEME_TEXT_PRIMARY, 30, 30);
-    make_label(c_wifi, "WiFi Station", THEME_FONT_HINT, THEME_TEXT_HINT, 12, 72);
+    d->wifi_ip     = make_label(c_wifi, "--", THEME_FONT_HINT, THEME_TEXT_PRIMARY, 30, 62);
+    make_label(c_wifi, "WiFi Station", THEME_FONT_HINT, THEME_TEXT_HINT, 12, 88);
+
+    // Reconnect button — bottom-right of card
+    {
+        lv_obj_t *btn = lv_btn_create(c_wifi);
+        lv_obj_set_size(btn, 110, 32);
+        lv_obj_set_pos(btn, CARD_W - 118, 118);
+        lv_obj_set_style_bg_color(btn, THEME_BG_CARD, 0);
+        lv_obj_set_style_bg_color(btn, THEME_ACCENT_DIM, LV_STATE_PRESSED);
+        lv_obj_set_style_border_color(btn, THEME_ACCENT, LV_STATE_PRESSED);
+        lv_obj_set_style_border_width(btn, 2, LV_STATE_PRESSED);
+        lv_obj_set_style_radius(btn, THEME_RADIUS, 0);
+        lv_obj_add_event_cb(btn, [](lv_event_t *) { wifi_reconnect(); }, LV_EVENT_CLICKED, nullptr);
+        lv_obj_t *lbl = lv_label_create(btn);
+        lv_label_set_text(lbl, LV_SYMBOL_REFRESH " RECONNECT");
+        lv_obj_set_style_text_color(lbl, THEME_TEXT_PRIMARY, 0);
+        lv_obj_set_style_text_font(lbl, THEME_FONT_HINT, 0);
+        lv_obj_center(lbl);
+    }
 
     // ── Audio card ────────────────────────────────────────────────────────────
     lv_obj_t *c_audio = make_card(scr, COL2_X, ROW1_Y, CARD_W, CARD_H, "AUDIO IN");
@@ -193,7 +215,7 @@ lv_obj_t *settings_screen_create()
     lv_obj_set_style_text_color(grad_lbl, THEME_TEXT_PRIMARY, 0);
     lv_obj_center(grad_lbl);
 
-    touch_nav_attach(scr, on_swipe, nullptr);
+    touch_nav_attach_2d(scr, on_swipe, nullptr);
 
     d->timer = lv_timer_create(settings_timer_cb, 1000, d);
     settings_timer_cb(d->timer);  // populate immediately on screen open

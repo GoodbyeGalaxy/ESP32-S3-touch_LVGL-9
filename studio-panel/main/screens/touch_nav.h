@@ -5,6 +5,11 @@
 // Callback type: called with direction (+1 = right/forward, -1 = left/back)
 using SwipeCallback = void(*)(int direction, void *user_data);
 
+// 2D callback: horizontal dir (±1, 0=none) + vertical dir (±1, 0=none).
+// Only one axis is non-zero per call. dir_h: +1=right, -1=left.
+// dir_v: +1=down, -1=up.
+using SwipeCallback2D = void(*)(int dir_h, int dir_v, void *user_data);
+
 // Long-press callback: called once after threshold, with press position.
 using LongPressCallback = void(*)(lv_point_t pos, void *user_data);
 
@@ -15,6 +20,12 @@ using LongPressCallback = void(*)(lv_point_t pos, void *user_data);
 // from children up to obj via LV_OBJ_FLAG_GESTURE_BUBBLE (LVGL default).
 // Callback runs inside the LVGL task — safe to call lv_* directly.
 void touch_nav_attach(lv_obj_t *obj, SwipeCallback cb, void *user_data, int min_px = 80);
+
+// 2D version of touch_nav_attach. Detects horizontal AND vertical swipes.
+// Fires cb with (dir_h, 0) for left/right or (0, dir_v) for up/down.
+// On RELEASED fallback: fires whichever axis has larger magnitude if > min_px.
+// Backward compat: touch_nav_attach remains unchanged.
+void touch_nav_attach_2d(lv_obj_t *obj, SwipeCallback2D cb, void *user_data, int min_px = 80);
 
 // Attach long-press detector to obj (obj must be CLICKABLE — tiles, buttons, etc).
 // threshold_ms: how long to hold (default 600ms). long_cb fires once per press

@@ -1,38 +1,31 @@
 #include "home.h"
 #include "theme.h"
 #include "screens/touch_nav.h"
+#include "screens/nav_controller.h"
 #include "screens/statusbar.h"
 #include "screens/foot.h"
-#include "screens/metering.h"
-#include "screens/studio_one.h"
-#include "screens/usb_midi.h"
-#include "screens/routing.h"
-#include "screens/dev_control.h"
-#include "screens/settings.h"
-#include "screens/spectrum.h"
 #include "lvgl.h"
 
 struct TileDef {
     const char *symbol;
     const char *label;
     const char *hint;
-    lv_obj_t *(*create_screen)();
+    NavPos      pos;
 };
 
 static const TileDef TILES[6] = {
-    { LV_SYMBOL_AUDIO,    "METERING",    "Pegel / RMS / LUFS",  metering_screen_create    },
-    { LV_SYMBOL_PLAY,     "STUDIO ONE",  "DAW Control",         studio_one_screen_create  },
-    { LV_SYMBOL_SHUFFLE,  "USB MIDI",    "CC / Nord Lead 2X",   usb_midi_screen_create    },
-    { LV_SYMBOL_BARS,     "SPECTRUM",    "FFT / Waterfall",     spectrum_screen_create    },
-    { LV_SYMBOL_SETTINGS, "DEVICE CTRL", "JSON Profiles",       dev_control_screen_create },
-    { LV_SYMBOL_SETTINGS, "SETTINGS",    "Config / OTA",        settings_screen_create    },
+    { LV_SYMBOL_AUDIO,    "METERING",    "Pegel / RMS / LUFS", {0, 0} },
+    { LV_SYMBOL_PLAY,     "STUDIO ONE",  "DAW Control",        {1, 0} },
+    { LV_SYMBOL_SHUFFLE,  "USB MIDI",    "CC / Nord Lead 2X",  {1, 1} },
+    { LV_SYMBOL_BARS,     "SPECTRUM",    "FFT / Waterfall",    {0, 1} },
+    { LV_SYMBOL_SETTINGS, "DEVICE CTRL", "JSON Profiles",      {2, 1} },
+    { LV_SYMBOL_SETTINGS, "SETTINGS",    "Config / OTA",       {2, 0} },
 };
 
 static void on_tile_clicked(lv_event_t *e)
 {
     auto *def = static_cast<const TileDef *>(lv_event_get_user_data(e));
-    lv_obj_t *target = def->create_screen();
-    lv_screen_load_anim(target, LV_SCR_LOAD_ANIM_MOVE_LEFT, 250, 0, true);
+    nav_go(def->pos);
 }
 
 lv_obj_t *home_screen_create()
@@ -48,7 +41,7 @@ lv_obj_t *home_screen_create()
     constexpr int TILE_H      = 178;
     constexpr int GAP_H       = 16;   // horizontal gap between tiles
     constexpr int GAP_V       = 12;   // vertical gap (also used as top/bottom margin)
-    constexpr int LEFT_MARGIN = 16;   // left margin (= (800 - 3*256 - 2*16) / 2)
+    constexpr int LEFT_MARGIN = 10;   // left margin
 
     for (int i = 0; i < 6; i++) {
         int col = i % 3;
@@ -64,7 +57,9 @@ lv_obj_t *home_screen_create()
         lv_obj_set_style_bg_color(tile, THEME_BG_CARD, 0);
         lv_obj_set_style_bg_color(tile, THEME_BG_CARD_HOVER, LV_STATE_PRESSED);
         lv_obj_set_style_bg_opa(tile, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_width(tile, 0, 0);
+        lv_obj_set_style_border_color(tile, THEME_ACCENT, 0);
+        lv_obj_set_style_border_width(tile, 1, 0);
+        lv_obj_set_style_border_opa(tile, LV_OPA_COVER, 0);
         lv_obj_set_style_radius(tile, THEME_RADIUS, 0);
         lv_obj_clear_flag(tile, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_add_flag(tile, LV_OBJ_FLAG_CLICKABLE);
@@ -98,12 +93,10 @@ lv_obj_t *home_screen_create()
     // Foot bar — Home button links, kein screen-spezifischer right_zone-Inhalt nötig
     foot_create(scr);
 
-    // Swipe-Navigation direkt am Screen — Gesture-Events bubbeln von den Tiles hoch.
-    // Kein CLICKABLE-Overlay noetig (das wuerde Tile-Klicks blockieren).
-    touch_nav_attach(scr, [](int dir, void *) {
-        if (dir < 0) {
-            lv_screen_load_anim(metering_screen_create(), LV_SCR_LOAD_ANIM_MOVE_LEFT, 250, 0, true);
-        }
+    // 2D Swipe-Navigation — routes through nav_controller.
+    // Gesture-Events bubbeln von den Tiles hoch (kein CLICKABLE-Overlay noetig).
+    touch_nav_attach_2d(scr, [](int dir_h, int dir_v, void *) {
+        nav_swipe(dir_h, dir_v);
     }, nullptr);
 
     return scr;

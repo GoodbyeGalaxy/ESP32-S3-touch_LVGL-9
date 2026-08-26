@@ -4,12 +4,11 @@
 #include "lvgl.h"
 #include "esp_lcd_touch.h"
 
-static lv_obj_t *s_bar       = nullptr;
-static lv_obj_t *s_title     = nullptr;
-static lv_obj_t *s_wifi      = nullptr;
-static lv_obj_t *s_time      = nullptr;
-static lv_obj_t *s_build     = nullptr;
-static lv_obj_t *s_touch_dot = nullptr;
+static lv_obj_t *s_bar   = nullptr;
+static lv_obj_t *s_title = nullptr;
+static lv_obj_t *s_wifi  = nullptr;
+static lv_obj_t *s_time  = nullptr;
+static lv_obj_t *s_build = nullptr;
 
 void statusbar_init()
 {
@@ -43,28 +42,32 @@ void statusbar_init()
     lv_obj_set_style_text_align(s_build, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(s_build, LV_ALIGN_CENTER, 0, 0);
 
-    // Touch-Dot entfernt: esp_lcd_touch_read_data() im LVGL-Task blockiert ~600μs
-    // und lässt den LCD-Bounce-Buffer leerlaufen → Display-Drift.
-    // Touch wird vom esp_lvgl_adapter intern ohne zusätzlichen I2C-Read gehandhabt.
-
-    // Zeit rechts
-    s_time = lv_label_create(s_bar);
-    lv_label_set_text(s_time, "--:--");
-    lv_obj_set_style_text_color(s_time, THEME_TEXT_SECONDARY, 0);
-    lv_obj_set_style_text_font(s_time, THEME_FONT_HINT, 0);
-    lv_obj_align(s_time, LV_ALIGN_RIGHT_MID, -12, 0);
-
-    // WiFi-Status
+    // WiFi-Status (ganz rechts)
     s_wifi = lv_label_create(s_bar);
     lv_label_set_text(s_wifi, LV_SYMBOL_WIFI);
     lv_obj_set_style_text_color(s_wifi, THEME_TEXT_SECONDARY, 0);
-    lv_obj_align(s_wifi, LV_ALIGN_RIGHT_MID, -60, 0);
+    lv_obj_align(s_wifi, LV_ALIGN_RIGHT_MID, -12, 0);
+
+    // Zeit (links vom WiFi-Icon; zunächst hidden bis SNTP sync)
+    s_time = lv_label_create(s_bar);
+    lv_label_set_text(s_time, "");
+    lv_obj_set_style_text_color(s_time, THEME_TEXT_SECONDARY, 0);
+    lv_obj_set_style_text_font(s_time, THEME_FONT_HINT, 0);
+    lv_obj_align(s_time, LV_ALIGN_RIGHT_MID, -52, 0);
+    lv_obj_add_flag(s_time, LV_OBJ_FLAG_HIDDEN);
 }
 
 void statusbar_set_screen_name(const char *name)
 {
     if (!s_title || !name) return;
     lv_label_set_text(s_title, name);
+}
+
+void statusbar_update_time(const char *time_str)
+{
+    if (!s_time) return;
+    lv_label_set_text(s_time, time_str);
+    lv_obj_clear_flag(s_time, LV_OBJ_FLAG_HIDDEN);  // reveal on first SNTP sync
 }
 
 void statusbar_update_wifi(bool connected, const char *ip_str)
@@ -76,8 +79,3 @@ void statusbar_update_wifi(bool connected, const char *ip_str)
     lv_label_set_text(s_wifi, LV_SYMBOL_WIFI);
 }
 
-void statusbar_update_time(const char *time_str)
-{
-    if (!s_time) return;
-    lv_label_set_text(s_time, time_str);
-}

@@ -10,5 +10,6 @@ void statusbar_set_screen_name(const char *name);
 // IN: connected state. OUT: WiFi symbol green (connected) or gray (not connected). No IP shown.
 void statusbar_update_wifi(bool connected, const char *ip_str = nullptr);
 
-// IN: time string e.g. "21:43". OUT: updates time label.
+// IN: time string e.g. "21:43". OUT: updates time label (shown once SNTP syncs).
 void statusbar_update_time(const char *time_str);
+

@@ -34,7 +34,7 @@ extern "C" void app_main()
     configASSERT(g_audio_queue != nullptr);
 
     wifi_init();        // non-blocking; net_receiver starts when IP assigned
-    usb_midi_driver_init(); // USB MIDI Class Device (TinyUSB, own task on Core 1)
+    // usb_midi_driver_init(); // disabled for crash diagnosis
     ui_init();
 
     ESP_LOGI(TAG, "Boot complete.");

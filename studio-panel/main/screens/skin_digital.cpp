@@ -109,7 +109,7 @@ void SkinDigital::bar_draw_cb(lv_event_t *e)
     {
         lv_draw_rect_dsc_t dsc;
         lv_draw_rect_dsc_init(&dsc);
-        dsc.bg_color = lv_color_hex(0x686868);  // ≥38% luminance — IPS panel minimum
+        dsc.bg_color = lv_color_hex(0x080808);
         dsc.radius   = THEME_RADIUS;
         lv_draw_rect(layer, &dsc, &a);
     }
@@ -205,25 +205,24 @@ void SkinDigital::render_phosphor()
 {
     auto *pixels = static_cast<uint16_t*>(gonio_buf_);
 
-    // BG = THEME_BG_PRIMARY (0x606060) in RGB565: R5=12, G6=24, B5=12 → 0x630C
-    // ≥38% Luminanz — vermeidet IPS-Panel-Grüntint auf dunklen Flächen
+    // BG = 0x080808 in RGB565: R5=1, G6=2, B5=1 → 0x0841
     for (int i = 0; i < 250 * 250; i++) {
         uint8_t b = brightness_[i];
         if (b == 0) {
-            pixels[i] = 0x630C;  // BG: sicheres Grau
+            pixels[i] = 0x0841;  // BG: 0x080808
         } else {
-            // Phosphor: Grau (b=0) → helles Grün (b=255)
-            // R: 12→0, G: 24→56, B: 12→4
-            uint16_t r5 = (uint16_t)(12 - (uint32_t)b * 12 / 255);
-            uint16_t g6 = (uint16_t)(24 + (uint32_t)b * 32 / 255);
-            uint16_t b5 = (uint16_t)(12 - (uint32_t)b *  8 / 255);
+            // Phosphor: near-black (b=0) → bright phosphor green (b=255)
+            // R: 1→0, G: 2→56, B: 1→1
+            uint16_t r5 = (uint16_t)(1 - (uint32_t)b * 1 / 255);
+            uint16_t g6 = (uint16_t)(2 + (uint32_t)b * 54 / 255);
+            uint16_t b5 = 1u;
             pixels[i] = (uint16_t)((r5 << 11) | (g6 << 5) | b5);
         }
     }
     // Zentrale Mono-Achse: minimal heller als BG
     for (int y = 10; y < 240; y++) {
         int i = y * 250 + 125;
-        if (brightness_[i] < 4) pixels[i] = 0x6560;  // leicht grüner als BG
+        if (brightness_[i] < 4) pixels[i] = 0x1082;  // 0x101010 dim gray axis
     }
     lv_obj_invalidate(gonio_);
 }
@@ -312,7 +311,7 @@ void SkinDigital::history_draw_cb(lv_event_t *e)
     {
         lv_draw_rect_dsc_t dsc;
         lv_draw_rect_dsc_init(&dsc);
-        dsc.bg_color = lv_color_hex(0x606060);  // ≥38% luminance — IPS panel minimum
+        dsc.bg_color = lv_color_hex(0x080808);
         dsc.radius   = THEME_RADIUS;
         lv_draw_rect(layer, &dsc, &a);
     }
@@ -459,7 +458,7 @@ void SkinDigital::spec_strip_draw_cb(lv_event_t *e)
     {
         lv_draw_rect_dsc_t dsc;
         lv_draw_rect_dsc_init(&dsc);
-        dsc.bg_color = lv_color_hex(0x505050);
+        dsc.bg_color = lv_color_hex(0x080808);
         dsc.radius   = THEME_RADIUS;
         lv_draw_rect(layer, &dsc, &a);
     }

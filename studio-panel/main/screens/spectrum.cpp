@@ -1,6 +1,6 @@
 // spectrum.cpp — Spectrum Analyzer Screen
 // Layout: Head 32px (statusbar, global), Content 800×392px (Y=32..424),
-//         Foot 56px (Y=424..480, 0x4A4A4A bg, ← Home + [BAR]/[WAVE] toggle).
+//         Foot 56px (Y=424..480, THEME_FOOT_BG, ← Home + [BAR]/[WAVE] toggle).
 // Visualisation: 64 bars (4 bins averaged), freq-based color gradient, peak-hold 2s.
 // Second view: line curve (green, 2px, no peak-hold).
 
@@ -9,6 +9,7 @@
 #include "theme.h"
 #include "screens/home.h"
 #include "screens/touch_nav.h"
+#include "screens/nav_controller.h"
 #include "screens/metering.h"
 #include "lvgl.h"
 #include "esp_log.h"
@@ -342,7 +343,7 @@ lv_obj_t *spectrum_screen_create()
     lv_obj_clear_flag(foot, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_pos(foot, 0, FOOT_Y);
     lv_obj_set_size(foot, SCREEN_W, FOOT_H);
-    lv_obj_set_style_bg_color(foot, lv_color_hex(0x4A4A4A), 0);
+    lv_obj_set_style_bg_color(foot, THEME_FOOT_BG, 0);
     lv_obj_set_style_bg_opa(foot, LV_OPA_COVER, 0);
 
     // ← Home button (left side, 90×40px)
@@ -382,13 +383,9 @@ lv_obj_t *spectrum_screen_create()
         d->mode_btn_lbl = lbl;
     }
 
-    // ── Swipe right → Home ────────────────────────────────────────────────────
-    touch_nav_attach(scr, [](int dir, void *) {
-        if (dir > 0) {
-            // Swipe right = navigate to metering (left-side screen)
-            lv_obj_t *meter = metering_screen_create();
-            lv_screen_load_anim(meter, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 200, 0, true);
-        }
+    // ── 2D Swipe — routes through nav_controller ──────────────────────────────
+    touch_nav_attach_2d(scr, [](int dir_h, int dir_v, void *) {
+        nav_swipe(dir_h, dir_v);
     }, nullptr);
 
     // ── Timer: 30 Hz update ───────────────────────────────────────────────────

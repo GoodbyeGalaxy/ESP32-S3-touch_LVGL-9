@@ -5,7 +5,7 @@
 **Projekt-Skills:** `docs/skills/` — Schritt-für-Schritt-Workflows für wiederkehrende Aufgaben.
 - `docs/skills/flash-verify.md` — Flash + Verifikation (OPI-Flash meldet Erfolg auch bei Fehler!)
 
-Phase 0+1+2+3+4(Metering Pro)+Touch+5(USB MIDI) abgeschlossen. Nächstes Ziel: **Phase 6 (Studio One WebSocket)**.
+Phase 0+1+2+3+4(Metering Pro)+Touch+5(USB MIDI)+UI-Polish abgeschlossen. Nächstes Ziel: **Phase 6 (Studio One WebSocket)**. Danach: Theme-Templating (Laufzeit-Farbwechsel, mehrere ThemeColors-Instanzen).
 
 ## Kurzübersicht
 
@@ -15,10 +15,10 @@ Phase 0+1+2+3+4(Metering Pro)+Touch+5(USB MIDI) abgeschlossen. Nächstes Ziel: *
 - **ESP-IDF aktivieren:** `source ~/esp/esp-idf-5.5/export.sh` (oder `source ~/.bashrc`)
 - **Serial-Port:** `/dev/ttyACM0` — `newgrp dialout` falls Permission denied
 - **WiFi-Credentials:** NUR in `studio-panel/sdkconfig.defaults.local` (gitignored) — NIEMALS in Kconfig.projbuild
-- **Audio-Script:** `tools/studio-panel-sender.py --host <ESP32-IP>` (Linux + macOS)
+- **Audio-Script:** `python3 /mnt/source/data/coding/ESP32-S3/tools/studio-panel-sender.py --host <ESP32-IP>` (Linux + macOS, IP sichtbar in Settings-Screen)
 - **GitHub Remote:** `origin` = `https://github.com/GoodbyeGalaxy/ESP32-S3-touch_LVGL-9.git`
 
-## Stand: ABGESCHLOSSEN (2026-08-26)
+## Stand: ABGESCHLOSSEN (2026-08-27)
 
 ✅ Phase 0: Display, LVGL, Hintergrundfarbe.
 ✅ Phase 1: Home Screen (6 Kacheln 3×2, Slide-Navigation, Statusleiste auf lv_layer_top).
@@ -26,19 +26,16 @@ Phase 0+1+2+3+4(Metering Pro)+Touch+5(USB MIDI) abgeschlossen. Nächstes Ziel: *
 ✅ Phase 3: WiFi + UDP (30Hz, 1072 Bytes), Metering mit echten Daten, Spectrum Screen (Balken/Kurve/Wasserfall, 4 Farbpresets, BOOT-Button Navigation).
 ✅ Phase 4 (Metering Pro): Engine/Skin-Architektur, Phosphor-Goniometer, Ballistic Modes (dBFS/VU/PPM I+II), Spectral Balance Strip, Fonts, IP in Statusbar.
 ✅ Phase 5 (USB MIDI): TinyUSB MIDI Class Device via `espressif/esp_tinyusb`. `usb_midi_driver.h/cpp` erstellt. SEND CC Button in `usb_midi.cpp` funktional.
+✅ UI-Polish: 2D-Navigation (nav_controller), Foot-Bar, Gradient-Test, Theme-System, VU-Verbesserungen, SNTP-Zeit.
 🎯 Nächstes Ziel: Phase 6 — Studio One WebSocket.
 
-**Dev-Workaround aktiv:** `ui.cpp` bootet direkt in Metering. Für Home-Screen: `home_screen_load()` in ui.cpp wiederherstellen.
-
-**Hintergrund FINAL:** H=0, S=0, V=38 in `theme.h`. Alle Kompensationen exhaustiv getestet (Magenta H=300, Blau H=220, Navy H=240, V=0–36) — alle schlimmer als neutrales Grau. Nicht weiter experimentieren.
-
-**Alle Farben ≥ 38% Luminanz** — IPS-Panel zeigt darunter grünen Tint. Ausnahme: reine Visualisierungsflächen (Waterfall-Canvas, FFT-Kurve). Statusleiste: 0x686868, BG: 0x606060, Cards: 0x747474.
+**Hintergrund FINAL:** `0x0A0A0A` (theme.cpp bg_primary + foot_bg) — nach GPIO8/9-Fix bestätigt sicher. Canvas-BG = `0x0841` (RGB565). Nicht weiter experimentieren.
 
 ## Offene Probleme (Stand: 2026-08-26)
 
 1. **CH422G** antwortet nicht auf I2C (ESP_FAIL) — Backlight läuft über Hardware-Default. Kein Reset möglich, aber Touch läuft trotzdem (siehe unten).
 2. **GT911 FUNKTIONIERT** — initialisiert via Adress-Fallback (0x5D→0x14) ohne CH422G-Reset. touch.cpp probiert beide Adressen automatisch.
-3. **IPS-Panel Schwarzpunkt** — Grünlicher Tint unterhalb ~38% Luminanz. Minimale Hintergrundfarbe: `0x606060`. NIEMALS `0x0A0A0A` oder ähnlich dunkle Werte. **AUCH Canvas-Flächen betroffen** — Canvas-Hintergrund = `0x630C` (RGB565 von 0x606060), nicht 0x0000!
+3. **IPS-Panel Schwarzpunkt** — Nach GPIO8/9-Fix (war fälschlicherweise I2C): `0x0A0A0A` als BG bestätigt sicher. Canvas-Flächen = `0x0841` (RGB565 von 0x080808). Reine Visualisierungsflächen (FFT, Waterfall) können tiefer gehen.
 4. **Drift (Bild verschiebt sich horizontal)** — PSRAM-Bandbreiten-Contention zwischen LCD-DMA und CPU-PSRAM-Zugriffen. Fix: `bounce_buffer_size_px = LCD_H_RES * 4` in display.cpp. Große PSRAM-Arrays in DRAM allozieren wenn möglich.
 5. **CH422G SDA stuck-low** — I2C-Bus physisch defekt. Nur Logikanalysator hilft. Backlight läuft über Hardware-Default ohne I2C.
 
