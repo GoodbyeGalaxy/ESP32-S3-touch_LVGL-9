@@ -5,6 +5,24 @@
 // Tile-Picker (4×2, 8 visual modes) + Fullscreen per mode.
 // NVS persists the last active mode index across power cycles.
 
+// ── Color palette system ───────────────────────────────────────────────────
+// All visual modes source their colors from the active palette.
+// Mood score modulates brightness/saturation only — never the hue.
+
+struct VisualPalette {
+    const char *name;
+    lv_color_t  primary;    // main content (curves, particles, rings)
+    lv_color_t  secondary;  // trails, fades, background glow
+    lv_color_t  accent;     // peaks, beats, transients
+    lv_color_t  bg_tint;    // subtle dark background tint (very dark)
+};
+
+// IN: nothing. OUT: pointer to currently active VisualPalette (never null).
+const VisualPalette *visuals_get_palette();
+
+// IN: index 0..4. OUT: nothing. Persists to NVS, notifies active mode.
+void visuals_set_palette(int index);
+
 // IN: nothing. OUT: tile-picker screen lv_obj_t* (not loaded — caller calls
 // lv_screen_load / lv_screen_load_anim).
 lv_obj_t *visuals_screen_create();

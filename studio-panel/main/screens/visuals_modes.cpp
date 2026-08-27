@@ -4,6 +4,8 @@
 // Black background constant: lv_color_hex(0x0A0A0A) — NOT 0x000000.
 
 #include "visuals_modes.h"
+#include "visuals.h"
+#include "theme.h"
 #include "demo_signal.h"
 #include "audio_data.h"
 #include "esp_log.h"
@@ -66,7 +68,7 @@ static void fade_canvas(lv_obj_t *canvas, lv_opa_t opa)
 
     lv_draw_rect_dsc_t dsc;
     lv_draw_rect_dsc_init(&dsc);
-    dsc.bg_color   = lv_color_hex(0x000000u);
+    dsc.bg_color   = visuals_get_palette()->bg_tint;
     dsc.bg_opa     = opa;
     dsc.radius     = 0;
     lv_area_t area = { 0, 0, CW - 1, CH - 1 };
@@ -75,10 +77,10 @@ static void fade_canvas(lv_obj_t *canvas, lv_opa_t opa)
     lv_canvas_finish_layer(canvas, &layer);
 }
 
-// IN: canvas. OUT: fills with 0x0A0A0A (safe black for IPS panel).
+// IN: canvas. OUT: fills with active palette bg_tint (very dark, safe for IPS panel).
 static void clear_canvas(lv_obj_t *canvas)
 {
-    lv_canvas_fill_bg(canvas, lv_color_hex(0x0A0A0Au), LV_OPA_COVER);
+    lv_canvas_fill_bg(canvas, visuals_get_palette()->bg_tint, LV_OPA_COVER);
 }
 
 // ── Latest AudioPacket snapshot ───────────────────────────────────────────────
@@ -169,9 +171,12 @@ static void mode0_tick(lv_obj_t *canvas, uint32_t t_ms)
     float vel = sqrtf(dx * dx + dy * dy);
     float bright = fminf(1.0f, 0.4f + vel * 30.0f);
 
-    // Hue: mood 0=cyan (0.5), mood 1=magenta (0.83)
-    float hue = 0.5f + g_visuals_mood * 0.33f;
-    lv_color_t col = hsv_to_color(hue, 0.7f, bright);
+    // Color: lerp between palette primary and accent driven by mood/velocity
+    const VisualPalette *pal = visuals_get_palette();
+    lv_color_t col = lv_color_mix(pal->accent, pal->primary,
+                                  (uint8_t)(g_visuals_mood * 255.0f));
+    // Dim by inverse brightness (bright=1 → full, bright=0 → dim)
+    col = lv_color_mix(col, pal->bg_tint, (uint8_t)(bright * 255.0f));
 
     // Draw a small glow cluster around the point
     for (int r = 2; r >= 0; r--) {
@@ -239,15 +244,20 @@ static void mode1_tick(lv_obj_t *canvas, uint32_t)
         s_circ.last_bins[i] += 0.3f * (s_pkt.bins[i] - s_circ.last_bins[i]);
     }
 
-    // Saturation driven by mood, always some colour
-    float sat = 0.5f + g_visuals_mood * 0.5f;
+    // Color: lerp from palette secondary (inner ring) to primary (peaks),
+    // accent marks the highest energy bins.
+    const VisualPalette *pal1 = visuals_get_palette();
 
     for (int i = 0; i < 256; i++) {
         float angle = s_circ.angle_offset + (float)i / 256.0f * TWO_PI;
         float r_end = BASE_R + s_circ.last_bins[i] * SCALE_R;
 
-        float hue = (float)i / 256.0f;
-        lv_color_t col = hsv_to_color(hue, sat, 0.8f);
+        // Bins with high energy → accent, others lerp primary↔secondary by mood
+        float energy_t = fminf(1.0f, s_circ.last_bins[i] * 3.0f);
+        lv_color_t base_col = lv_color_mix(pal1->primary, pal1->secondary,
+                                           (uint8_t)((1.0f - g_visuals_mood) * 255.0f));
+        lv_color_t col = lv_color_mix(pal1->accent, base_col,
+                                      (uint8_t)(energy_t * 255.0f));
 
         float cos_a = cosf(angle), sin_a = sinf(angle);
 
@@ -327,10 +337,10 @@ static void mode2_tick(lv_obj_t *canvas, uint32_t)
     // Thickness
     int   widths[3] = { 4, 2, 1 };
 
-    // Layer colours (hue-based, mood shifts palette)
-    // Bass: blue-purple, mid: cyan-green, treble: white-yellow
-    float base_hues[3]  = { 0.67f, 0.50f, 0.16f };
-    float mood_shift    = (g_visuals_mood - 0.5f) * 0.15f;  // cool ↔ warm
+    // Layer colours from active palette:
+    // bass (0) → secondary, mid (1) → primary, treble (2) → accent
+    const VisualPalette *pal2 = visuals_get_palette();
+    const lv_color_t layer_cols[3] = { pal2->secondary, pal2->primary, pal2->accent };
 
     lv_layer_t layer;
     lv_canvas_init_layer(canvas, &layer);
@@ -341,8 +351,10 @@ static void mode2_tick(lv_obj_t *canvas, uint32_t)
         l.phase        += l.speed * (1.0f + e * 2.0f);
 
         float amp = amps[li] * (0.3f + e * 0.7f);
-        float hue = base_hues[li] + mood_shift;
-        lv_color_t col = hsv_to_color(hue, 0.7f, 0.6f + e * 0.4f);
+        // Brighten/dim by energy; mood modulates mix toward secondary
+        lv_color_t bright_col = lv_color_mix(layer_cols[li], pal2->secondary,
+                                             (uint8_t)((1.0f - e) * 128.0f));
+        lv_color_t col = bright_col;
 
         lv_draw_line_dsc_t dsc;
         lv_draw_line_dsc_init(&dsc);
@@ -466,21 +478,10 @@ static void mode3_tick(lv_obj_t *canvas, uint32_t)
     }
     s_bass.last_bass = bass_e;
 
-    // Mood → colour shift: 0=white, 0.5=blue, 1=orange
-    lv_color_t ring_col;
-    if (g_visuals_mood < 0.5f) {
-        float t = g_visuals_mood * 2.0f;
-        ring_col = lv_color_make(
-            (uint8_t)(255 - t * (255 - 50)),
-            (uint8_t)(255 - t * (255 - 100)),
-            255u);
-    } else {
-        float t = (g_visuals_mood - 0.5f) * 2.0f;
-        ring_col = lv_color_make(
-            255u,
-            (uint8_t)(100 - t * 100),
-            (uint8_t)(255 - t * 255));
-    }
+    // Color: mood lerps between palette primary (low mood) and accent (high mood)
+    const VisualPalette *pal3 = visuals_get_palette();
+    lv_color_t ring_col = lv_color_mix(pal3->accent, pal3->primary,
+                                       (uint8_t)((1.0f - g_visuals_mood) * 255.0f));
 
     lv_layer_t layer;
     lv_canvas_init_layer(canvas, &layer);
@@ -572,26 +573,34 @@ static void mode4_tick(lv_obj_t *canvas, uint32_t)
     lv_layer_t layer;
     lv_canvas_init_layer(canvas, &layer);
 
-    // Draw 3 depth layers (back to front)
-    // Layer 2 (back): 30% brightness, heights*0.35, y_offset=-80
-    // Layer 1 (mid): 60% brightness, heights*0.6, y_offset=-40
-    // Layer 0 (front): full brightness, heights*1.0, y_offset=0
+    // Draw 3 depth layers (back to front) using palette colors
+    // Layer 2 (back): secondary dimmed, heights*0.35, y_offset=-80
+    // Layer 1 (mid): lerp secondary↔primary, heights*0.6, y_offset=-40
+    // Layer 0 (front): primary/accent, heights*1.0, y_offset=0
+    const VisualPalette *pal4 = visuals_get_palette();
 
-    struct LayerSpec { float h_scale; float bright; int y_off; uint32_t hue_hex; };
+    struct LayerSpec { float h_scale; float bright; int y_off; };
     static const LayerSpec layers[3] = {
-        { 0.35f, 0.30f, -80, 0x000040u },  // back:  dark blue
-        { 0.60f, 0.60f, -40, 0x003060u },  // mid:   blue
-        { 1.00f, 1.00f,   0, 0x00C0C0u },  // front: cyan-teal
+        { 0.35f, 0.30f, -80 },  // back
+        { 0.60f, 0.60f, -40 },  // mid
+        { 1.00f, 1.00f,   0 },  // front
+    };
+
+    // Per-layer colors derived from palette
+    lv_color_t layer_colors[3] = {
+        lv_color_mix(pal4->secondary, lv_color_hex(0x000000u), 80),   // back: very dim secondary
+        lv_color_mix(pal4->primary,   pal4->secondary,          128),  // mid: blend
+        lv_color_mix(pal4->accent,    pal4->primary,
+                     (uint8_t)(g_visuals_mood * 255.0f)),              // front: accent↔primary by mood
     };
 
     int base_y = CH - THEME_FOOT_H - 10;  // bottom of terrain area
 
     for (int li = 2; li >= 0; li--) {
         const LayerSpec &L = layers[li];
-        lv_color_t col = lv_color_make(
-            (uint8_t)((((L.hue_hex >> 16) & 0xFF)) * L.bright),
-            (uint8_t)((((L.hue_hex >>  8) & 0xFF)) * L.bright),
-            (uint8_t)(( (L.hue_hex       & 0xFF))  * L.bright));
+        // Apply brightness scaling to the layer color
+        lv_color_t col = lv_color_mix(layer_colors[li], lv_color_hex(0x000000u),
+                                      (uint8_t)(L.bright * 255.0f));
 
         for (int x = 0; x < CW; x++) {
             float h = s_terrain->heights[x] * L.h_scale;

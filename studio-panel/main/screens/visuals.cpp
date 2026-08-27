@@ -21,10 +21,29 @@
 
 static const char *TAG = "visuals";
 
+// ── Palette definitions ───────────────────────────────────────────────────────
+
+static const VisualPalette k_palettes[] = {
+    {"PHOSPHOR", lv_color_hex(0x00E5FF), lv_color_hex(0x00838F), lv_color_hex(0x69FF47), lv_color_hex(0x000A08)},
+    {"NOIR",     lv_color_hex(0xE0E0E0), lv_color_hex(0x505050), lv_color_hex(0xFFFFFF), lv_color_hex(0x080808)},
+    {"SYNTHWAVE",lv_color_hex(0xFF0080), lv_color_hex(0x6A0080), lv_color_hex(0x00FFFF), lv_color_hex(0x0A0010)},
+    {"SOLAR",    lv_color_hex(0xFFB300), lv_color_hex(0x5D3200), lv_color_hex(0xFF6D00), lv_color_hex(0x0A0600)},
+    {"ARCTIC",   lv_color_hex(0x80D8FF), lv_color_hex(0x003D5C), lv_color_hex(0xE0F7FF), lv_color_hex(0x00080A)},
+};
+static constexpr int k_palette_count = 5;
+static int s_palette_index = 0;
+
+// IN: nothing. OUT: pointer to currently active VisualPalette (never null).
+const VisualPalette *visuals_get_palette()
+{
+    return &k_palettes[s_palette_index];
+}
+
 // ── NVS ───────────────────────────────────────────────────────────────────────
 
-static constexpr char NVS_NS[]  = "visuals";
-static constexpr char NVS_KEY[] = "mode";
+static constexpr char NVS_NS[]        = "visuals";
+static constexpr char NVS_KEY[]       = "mode";
+static constexpr char NVS_KEY_PAL[]   = "palette";
 
 // IN: mode_index 0..7. OUT: nothing. Persists to NVS.
 static void save_mode(int idx)
@@ -47,6 +66,42 @@ static int load_mode()
         nvs_close(h);
     }
     return val < 8 ? (int)val : 0;
+}
+
+// IN: palette_index 0..4. OUT: nothing. Persists to NVS.
+static void save_palette(int idx)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_u8(h, NVS_KEY_PAL, (uint8_t)idx);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+}
+
+// IN: nothing. OUT: saved palette index, or 0 if not found.
+static int load_palette()
+{
+    nvs_handle_t h;
+    uint8_t val = 0;
+    if (nvs_open(NVS_NS, NVS_READONLY, &h) == ESP_OK) {
+        nvs_get_u8(h, NVS_KEY_PAL, &val);
+        nvs_close(h);
+    }
+    return val < (uint8_t)k_palette_count ? (int)val : 0;
+}
+
+// IN: index 0..4. OUT: nothing. Persists to NVS, updates palette dot if visible.
+void visuals_set_palette(int index)
+{
+    if (index < 0 || index >= k_palette_count) return;
+    s_palette_index = index;
+    save_palette(index);
+    // Update the dot on the PALETTE pill if the fullscreen is currently shown
+    if (s_palette_dot) {
+        lv_obj_set_style_bg_color(s_palette_dot,
+            k_palettes[s_palette_index].primary, 0);
+    }
 }
 
 // ── Mode table ────────────────────────────────────────────────────────────────
@@ -76,7 +131,8 @@ static int         s_active_mode = 0;
 static lv_obj_t   *s_fs_scr     = nullptr;  // current fullscreen screen
 static lv_obj_t   *s_canvas     = nullptr;
 static lv_timer_t *s_render_timer = nullptr;
-static lv_obj_t   *s_demo_btn_lbl = nullptr;  // label on DEMO pill button
+static lv_obj_t   *s_demo_btn_lbl   = nullptr;  // label on DEMO pill button
+static lv_obj_t   *s_palette_dot    = nullptr;   // color dot on PALETTE pill
 
 // Per-mode PSRAM canvas buffer (800×480×4 bytes = 1.5 MB) — allocated once,
 // reused across mode switches to avoid repeated heap churn.
@@ -129,6 +185,146 @@ static void on_demo_btn(lv_event_t *e)
     refresh_demo_btn();
 }
 
+// ── Palette overlay ───────────────────────────────────────────────────────────
+// Semi-transparent panel, direct child of fullscreen screen.
+// Tap on a palette pill → visuals_set_palette() + destroy overlay.
+// Tap on overlay background → destroy overlay (no change).
+
+// User-data struct carried by each palette pill button.
+struct PillUD { lv_obj_t *overlay; int index; };
+
+static void destroy_overlay(lv_event_t *e)
+{
+    lv_obj_t *overlay = static_cast<lv_obj_t *>(lv_event_get_user_data(e));
+    if (!overlay || !lv_obj_is_valid(overlay)) return;
+
+    // Free PillUD structs on pill children before LVGL destroys them
+    uint32_t child_cnt = lv_obj_get_child_count(overlay);
+    for (uint32_t ci = 0; ci < child_cnt; ci++) {
+        lv_obj_t *child = lv_obj_get_child(overlay, ci);
+        void *cud = lv_obj_get_user_data(child);
+        if (cud) {
+            delete static_cast<PillUD *>(cud);
+            lv_obj_set_user_data(child, nullptr);
+        }
+    }
+    lv_obj_delete(overlay);
+}
+
+static void on_palette_pill_click(lv_event_t *e)
+{
+    PillUD *ud = static_cast<PillUD *>(lv_event_get_user_data(e));
+    if (!ud) return;
+
+    int       idx     = ud->index;
+    lv_obj_t *overlay = ud->overlay;
+
+    // Set palette (updates dot, saves to NVS)
+    visuals_set_palette(idx);
+
+    // Destroy overlay — also frees all children (and their user_data structs
+    // are heap-allocated: clean up before delete)
+    if (overlay && lv_obj_is_valid(overlay)) {
+        // Free all pill user_data structs before destroying the parent
+        uint32_t child_cnt = lv_obj_get_child_count(overlay);
+        for (uint32_t ci = 0; ci < child_cnt; ci++) {
+            lv_obj_t *child = lv_obj_get_child(overlay, ci);
+            void *cud = lv_obj_get_user_data(child);
+            if (cud) {
+                delete static_cast<PillUD *>(cud);
+                lv_obj_set_user_data(child, nullptr);
+            }
+        }
+        lv_obj_delete(overlay);
+    }
+}
+
+static void on_palette_btn(lv_event_t *e)
+{
+    lv_obj_t *screen = static_cast<lv_obj_t *>(lv_event_get_user_data(e));
+    if (!screen) return;
+
+    // Overlay container — 800×90px, vertically above foot bar by 8px
+    constexpr int OVL_H  = 90;
+    constexpr int OVL_Y  = 480 - THEME_FOOT_H - OVL_H - 8;
+
+    lv_obj_t *overlay = lv_obj_create(screen);
+    lv_obj_remove_style_all(overlay);
+    lv_obj_set_size(overlay, 800, OVL_H);
+    lv_obj_set_pos(overlay, 0, OVL_Y);
+    lv_obj_set_style_bg_color(overlay, lv_color_hex(0x111111u), 0);
+    lv_obj_set_style_bg_opa(overlay, (lv_opa_t)230, 0);
+    lv_obj_set_style_radius(overlay, 12, 0);
+    lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(overlay, LV_OBJ_FLAG_CLICKABLE);
+    // Tap on overlay background → close without change
+    lv_obj_add_event_cb(overlay, destroy_overlay, LV_EVENT_CLICKED, overlay);
+
+    // 5 palette pills: 120×52px, 10px gap, centered inside overlay
+    constexpr int  PPILL_W   = 120;
+    constexpr int  PPILL_H   = 52;
+    constexpr int  PPILL_GAP = 10;
+    constexpr int  TOTAL_W   = k_palette_count * PPILL_W + (k_palette_count - 1) * PPILL_GAP;
+    int            start_x   = (800 - TOTAL_W) / 2;
+    int            start_y   = (OVL_H - PPILL_H) / 2;
+
+    for (int i = 0; i < k_palette_count; i++) {
+        const VisualPalette &pal = k_palettes[i];
+        bool active = (i == s_palette_index);
+
+        int pill_x = start_x + i * (PPILL_W + PPILL_GAP);
+
+        lv_obj_t *pill = lv_obj_create(overlay);
+        lv_obj_remove_style_all(pill);
+        lv_obj_set_size(pill, PPILL_W, PPILL_H);
+        lv_obj_set_pos(pill, pill_x, start_y);
+        lv_obj_clear_flag(pill, LV_OBJ_FLAG_SCROLLABLE);
+
+        // BG: dimmed primary (mix primary 25% with black)
+        lv_color_t dim_bg = lv_color_mix(pal.primary, lv_color_hex(0x000000u), 64);
+        lv_obj_set_style_bg_color(pill, dim_bg, 0);
+        lv_obj_set_style_bg_opa(pill, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(pill, 8, 0);
+
+        // Border: active = 3px white, inactive = 2px primary
+        lv_obj_set_style_border_width(pill, active ? 3 : 2, 0);
+        lv_obj_set_style_border_color(pill,
+            active ? lv_color_hex(0xFFFFFFu) : pal.primary, 0);
+        lv_obj_set_style_border_opa(pill, LV_OPA_COVER, 0);
+
+        // Name label (upper area)
+        lv_obj_t *name_lbl = lv_label_create(pill);
+        lv_obj_remove_style_all(name_lbl);
+        lv_label_set_text(name_lbl, pal.name);
+        lv_obj_set_style_text_color(name_lbl, lv_color_hex(0xFFFFFFu), 0);
+        lv_obj_set_style_text_font(name_lbl, THEME_FONT_HINT, 0);
+        lv_obj_set_size(name_lbl, PPILL_W - 4, 18);
+        lv_label_set_long_mode(name_lbl, LV_LABEL_LONG_CLIP);
+        lv_obj_set_style_text_align(name_lbl, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_align(name_lbl, LV_ALIGN_TOP_MID, 0, 6);
+
+        // Accent band (8px high, bottom of pill) in accent color
+        lv_obj_t *band = lv_obj_create(pill);
+        lv_obj_remove_style_all(band);
+        lv_obj_set_size(band, PPILL_W, 8);
+        lv_obj_align(band, LV_ALIGN_BOTTOM_MID, 0, 0);
+        lv_obj_set_style_bg_color(band, pal.accent, 0);
+        lv_obj_set_style_bg_opa(band, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(band, 0, 0);
+
+        // Click on pill — stop propagation to overlay background
+        lv_obj_add_flag(pill, LV_OBJ_FLAG_CLICKABLE);
+
+        PillUD *ud = new PillUD{overlay, i};
+        lv_obj_set_user_data(pill, ud);
+        lv_obj_add_event_cb(pill, [](lv_event_t *ev) {
+            // Stop propagation so overlay-background click handler doesn't fire
+            lv_event_stop_bubbling(ev);
+        }, LV_EVENT_CLICKED, nullptr);
+        lv_obj_add_event_cb(pill, on_palette_pill_click, LV_EVENT_CLICKED, ud);
+    }
+}
+
 // ── Render timer (fullscreen) ─────────────────────────────────────────────────
 
 // IN: lv_timer_t* user_data = canvas lv_obj_t*. OUT: nothing.
@@ -150,6 +346,13 @@ void visuals_render_tick(lv_timer_t *t)
 
 static lv_obj_t *build_fullscreen(int mode_idx)
 {
+    // Load palette from NVS once (first fullscreen build only)
+    static bool s_palette_loaded = false;
+    if (!s_palette_loaded) {
+        s_palette_index  = load_palette();
+        s_palette_loaded = true;
+    }
+
     lv_obj_t *scr = theme_make_screen();
 
     statusbar_set_screen_name(MODES[mode_idx].name);
@@ -178,14 +381,24 @@ static lv_obj_t *build_fullscreen(int mode_idx)
     // Foot bar
     foot_create(scr);
 
-    // DEMO pill button — 80×28px, bottom-right, 12px margin, radius 14
-    // Placed on scr directly so it floats above canvas
+    // Pill button layout (bottom-right, 12px outer margin, 8px gap between pills):
+    //   [DEMO 76×28] [PALETTE 96×28]  ←12px margin
+    // Both pills share the same Y (bottom of content area minus 12px).
+
+    constexpr int PILL_H        = 28;
+    constexpr int PILL_MARGIN   = 12;
+    constexpr int PILL_GAP      = 8;
+    constexpr int DEMO_W        = 76;
+    constexpr int PALETTE_W     = 96;
+    constexpr int PILL_Y        = 480 - THEME_FOOT_H - PILL_H - PILL_MARGIN;
+    constexpr int PALETTE_X     = 800 - PALETTE_W - PILL_MARGIN;
+    constexpr int DEMO_X        = PALETTE_X - PILL_GAP - DEMO_W;
+
+    // DEMO pill — 76×28px
     lv_obj_t *demo_btn = lv_btn_create(scr);
     lv_obj_remove_style_all(demo_btn);
-    lv_obj_set_size(demo_btn, 80, 28);
-    lv_obj_set_pos(demo_btn,
-                   800 - 80 - 12,
-                   480 - THEME_FOOT_H - 28 - 12);
+    lv_obj_set_size(demo_btn, DEMO_W, PILL_H);
+    lv_obj_set_pos(demo_btn, DEMO_X, PILL_Y);
     lv_obj_set_style_bg_color(demo_btn, THEME_BG_CARD, 0);
     lv_obj_set_style_bg_opa(demo_btn, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(demo_btn, 14, 0);
@@ -201,6 +414,38 @@ static lv_obj_t *build_fullscreen(int mode_idx)
     lv_obj_center(demo_lbl);
     s_demo_btn_lbl = demo_lbl;
     refresh_demo_btn();
+
+    // PALETTE pill — 96×28px, ganz rechts
+    lv_obj_t *pal_btn = lv_btn_create(scr);
+    lv_obj_remove_style_all(pal_btn);
+    lv_obj_set_size(pal_btn, PALETTE_W, PILL_H);
+    lv_obj_set_pos(pal_btn, PALETTE_X, PILL_Y);
+    lv_obj_set_style_bg_color(pal_btn, THEME_BG_CARD, 0);
+    lv_obj_set_style_bg_opa(pal_btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(pal_btn, 14, 0);
+    lv_obj_set_style_border_width(pal_btn, 0, 0);
+    lv_obj_add_flag(pal_btn, LV_OBJ_FLAG_CLICKABLE);
+
+    // Color dot (8px circle) — leftish inside pill, primary color of active palette
+    lv_obj_t *dot = lv_obj_create(pal_btn);
+    lv_obj_remove_style_all(dot);
+    lv_obj_set_size(dot, 8, 8);
+    lv_obj_set_style_bg_color(dot, k_palettes[s_palette_index].primary, 0);
+    lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(dot, 4, 0);
+    lv_obj_align(dot, LV_ALIGN_LEFT_MID, 10, 0);
+    s_palette_dot = dot;
+
+    lv_obj_t *pal_lbl = lv_label_create(pal_btn);
+    lv_obj_remove_style_all(pal_lbl);
+    lv_label_set_text(pal_lbl, "PALETTE");
+    lv_obj_set_style_text_color(pal_lbl, THEME_TEXT_HINT, 0);
+    lv_obj_set_style_text_font(pal_lbl, THEME_FONT_HINT, 0);
+    lv_obj_align(pal_lbl, LV_ALIGN_RIGHT_MID, -8, 0);
+
+    // Pass the parent screen pointer as user data so the overlay handler
+    // can attach the overlay to the correct screen object.
+    lv_obj_add_event_cb(pal_btn, on_palette_btn, LV_EVENT_CLICKED, scr);
 
     // 2D swipe navigation in fullscreen
     touch_nav_attach_2d(scr, [](int dir_h, int dir_v, void *) {
@@ -229,9 +474,10 @@ static void on_fs_delete(lv_event_t *e)
     if (s_canvas) {
         visuals_mode_deinit(s_active_mode, s_canvas);
     }
-    s_fs_scr       = nullptr;
-    s_canvas       = nullptr;
-    s_demo_btn_lbl = nullptr;
+    s_fs_scr        = nullptr;
+    s_canvas        = nullptr;
+    s_demo_btn_lbl  = nullptr;
+    s_palette_dot   = nullptr;
     ESP_LOGI(TAG, "fullscreen deleted (mode %d)", s_active_mode);
 }
 
