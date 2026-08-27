@@ -235,6 +235,46 @@ Spectrum-Screen entfällt als eigenständiger Screen. Spectrum-Ansicht wird **ve
 
 ---
 
+## Demo-Signal-Generator
+
+Wenn keine echten UDP-Audiodaten ankommen (oder explizit aktiviert), generiert ein
+Background-Task synthetische `AudioPacket`-Daten und schreibt sie in `g_audio_queue`.
+
+**Signal-Design:**
+- **Goniometer:** Phasenmodulierte Sinus-Paare mit wechselnden Frequenzverhältnissen
+  (1:1 → Kreis, 2:3 → Acht, 3:4 → Kleeblatt). Übergang alle 8s.
+- **FFT bins:** 2–3 wandernde Gauss-Peaks, langsam über das Spektrum sweepend.
+  Amplituden atmen sinusoidal. Gelegentlicher zufälliger Transient (simuliert Kick/Snare).
+- **Peak/RMS:** Sinusoidal atmend zwischen -24 und -6 dBFS.
+- **Momentary LUFS:** Folgt RMS mit 400ms Zeitkonstante.
+
+**Auto-Aktivierung:** `net_receiver.cpp` schreibt Timestamp bei jedem validen Packet.
+Demo-Generator prüft: falls >2s kein Packet → Demo übernimmt g_audio_queue.
+Echtes Signal verdrängt Demo sofort (xQueueOverwrite, kein Lock nötig).
+
+**Expliziter Toggle:** Demo-Button in Visuals-Fullscreen erzwingt Demo unabhängig
+vom Signal-Status. Nützlich um Visuals zu betrachten ohne MAC laufen zu lassen.
+
+**Implementierung:** `demo_signal.h/cpp`
+- `demo_signal_init()` — erstellt FreeRTOS-Task (Core 0, Priority 3, 2048 Stack)
+- `demo_signal_set_forced(bool)` — expliziter Toggle (Button)
+- `demo_signal_notify_packet()` — von net_receiver.cpp aufgerufen bei echtem Packet
+
+---
+
+## Demo-Toggle-Button (Visuals Fullscreen)
+
+Kleines "DEMO" Pill-Button, floating bottom-right im Visuals-Fullscreen-Screen,
+über dem Foot-Bar. Implementierung via `lv_obj_t` mit `LV_LAYER_TOP`-ähnlicher
+Positionierung direkt auf dem Screen-Objekt.
+
+- **Inaktiv:** Hintergrund `THEME_BG_CARD`, Text "DEMO", Schrift `THEME_FONT_HINT`
+- **Aktiv:** Hintergrund `lv_color_hex(0xE65100)` (Orange), Text "DEMO ●"
+- Größe: 80×28px, Radius 14 (Pill-Form), Position: bottom-right, 12px Margin
+- Tap togglet `demo_signal_set_forced()` und aktualisiert Button-Style sofort
+
+---
+
 ## Arbeitspakete
 
 ### WP-A: Foundation (Subagent-geeignet, unabhängig)
@@ -245,6 +285,8 @@ Spectrum-Screen entfällt als eigenständiger Screen. Spectrum-Ansicht wird **ve
 - Mood-Score-System: kontinuierlicher float, BPM-getaktet, Inputs aus AudioPacket
 - Morph State Machine: STABLE→MORPHING→COOLDOWN, alle Trigger-Quellen
 - Placeholder-Kacheln (Solid Color + Name) für alle 8 Modi
+- `demo_signal.h/cpp` — synthetischer AudioPacket-Generator
+- Demo-Toggle-Button in Visuals-Fullscreen (bottom-right Pill)
 
 ### WP-B: On-Device Classics (Subagent-geeignet nach WP-A)
 - Mode 1: Lissajous XL (Phosphor-Trail, Mood-Farbe)
