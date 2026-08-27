@@ -20,6 +20,8 @@ idf_component_register(
         "screens/dev_control.cpp"
         "screens/settings.cpp"
         "screens/spectrum.cpp"
+        "screens/visuals.cpp"
+        "screens/visuals_modes.cpp"
         "screens/meter_engine.cpp"
         "screens/skin_digital.cpp"
         "screens/skin_vu.cpp"
@@ -27,6 +29,7 @@ idf_component_register(
         "screens/nav_controller.cpp"
         "screens/gradient_test.cpp"
         "screens/foot.cpp"
+        "demo_signal.cpp"
     INCLUDE_DIRS "."
     REQUIRES
         esp_driver_i2c

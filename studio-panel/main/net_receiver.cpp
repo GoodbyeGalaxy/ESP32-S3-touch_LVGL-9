@@ -1,5 +1,6 @@
 #include "net_receiver.h"
 #include "audio_data.h"
+#include "demo_signal.h"
 #include "esp_log.h"
 #include "lwip/sockets.h"
 #include "freertos/FreeRTOS.h"
@@ -82,6 +83,7 @@ static void udp_task(void *)
         last_seq = pkt->seq;
 
         xQueueOverwrite(g_audio_queue, pkt);
+        demo_signal_notify_packet();  // suppress demo auto-mode while real signal present
 
         // Log drop rate every ~10 seconds (300 packets at 30 Hz)
         if (++pkt_count % 300 == 0) {

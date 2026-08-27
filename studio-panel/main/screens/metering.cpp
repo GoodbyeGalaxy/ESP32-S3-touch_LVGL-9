@@ -131,8 +131,16 @@ lv_obj_t *metering_screen_create()
     d->skin->create(d->skin_container);
 
     // 2D Swipe-Navigation — routes through nav_controller.
+    // Swipe UP within Metering → load Spectrum as an overlay view.
+    // All other directions route through nav_controller as usual.
     // BOOT-Button ISR (skin cycling within SkinDigital) is unaffected.
     touch_nav_attach_2d(scr, [](int dir_h, int dir_v, void *) {
+        if (dir_v == -1) {
+            // Swipe up → Spectrum sub-view (slides in from top, auto_del=true)
+            lv_obj_t *spec = spectrum_screen_create();
+            lv_screen_load_anim(spec, LV_SCR_LOAD_ANIM_MOVE_TOP, 200, 0, true);
+            return;
+        }
         nav_swipe(dir_h, dir_v);
     }, nullptr);
 

@@ -8,6 +8,7 @@
 #include "ui.h"
 #include "esp_lv_adapter.h"
 #include "audio_data.h"
+#include "demo_signal.h"
 #include "wifi.h"
 #include "usb_midi_driver.h"
 
@@ -32,6 +33,8 @@ extern "C" void app_main()
 
     g_audio_queue = xQueueCreate(1, sizeof(AudioPacket));
     configASSERT(g_audio_queue != nullptr);
+
+    demo_signal_init();  // synthetic audio — auto-activates when no real UDP signal
 
     wifi_init();        // non-blocking; net_receiver starts when IP assigned
     // usb_midi_driver_init(); // disabled for crash diagnosis

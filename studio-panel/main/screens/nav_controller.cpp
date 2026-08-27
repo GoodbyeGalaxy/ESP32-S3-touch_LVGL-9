@@ -1,9 +1,11 @@
 // nav_controller.cpp — Row & Column 2D navigation for the studio panel.
 //
 // Grid layout:
-//   Row 0  AUDIO:    [Metering col 0] ↔ [Spectrum col 1]
+//   Row 0  AUDIO:    [Metering col 0] ↔ [Visuals col 1]
 //   Row 1  CONTROL:  [Studio One col 0] ↔ [USB MIDI col 1] ↔ [Routing col 2]
 //   Row 2  SYSTEM:   [Settings col 0] ↔ [Dev Control col 1]
+//
+// Spectrum is now a swipe-up sub-view within Metering (not a standalone screen).
 //
 // Navigation rules:
 //   Swipe LEFT  (dir_h=-1): col+1 in same row. No-op at last col.
@@ -19,7 +21,7 @@
 
 #include "esp_timer.h"
 #include "screens/metering.h"
-#include "screens/spectrum.h"
+#include "screens/visuals.h"
 #include "screens/studio_one.h"
 #include "screens/usb_midi.h"
 #include "screens/routing.h"
@@ -42,8 +44,8 @@ struct RowDef {
 static constexpr int ROW_COUNT = 3;
 
 static const RowDef ROWS[ROW_COUNT] = {
-    // Row 0: AUDIO
-    { 2, { metering_screen_create, spectrum_screen_create, nullptr } },
+    // Row 0: AUDIO  — Spectrum is now a swipe-up sub-view inside Metering
+    { 2, { metering_screen_create, visuals_screen_create, nullptr } },
     // Row 1: CONTROL
     { 3, { studio_one_screen_create, usb_midi_screen_create, routing_screen_create } },
     // Row 2: SYSTEM
