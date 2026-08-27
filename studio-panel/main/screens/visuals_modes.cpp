@@ -1,4 +1,4 @@
-// visuals_modes.cpp — On-Device Visual Mode renderers (Modes 0-4).
+// visuals_modes.cpp — On-Device Visual Mode renderers (Modes 0-7).
 // All modes use an 800×480 LVGL canvas allocated in PSRAM by visuals.cpp.
 // Canvas pixel access: lv_canvas_set_px() — writes ARGB8888 into PSRAM buffer.
 // Black background constant: lv_color_hex(0x0A0A0A) — NOT 0x000000.
@@ -8,8 +8,13 @@
 #include "theme.h"
 #include "demo_signal.h"
 #include "audio_data.h"
+#include "studio_one_data.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_heap_caps.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
 #include <cmath>
 #include <cstring>
 #include <algorithm>
@@ -639,12 +644,420 @@ static void mode4_deinit(lv_obj_t *)
     s_terrain = nullptr;
 }
 
-// ── Stub implementations for unimplemented modes (5-7, WP-C / WP-E) ──────────
+// ── Stub implementations for unimplemented modes (5-6, WP-E) ─────────────────
 
 static void mode_stub_init(lv_obj_t *c)   { clear_canvas(c); }
 static void mode_stub_tick(lv_obj_t *, uint32_t) {}
 static void mode_stub_touch(lv_obj_t *, int, int) {}
 static void mode_stub_deinit(lv_obj_t *) {}
+
+// ── MODE 7: Julia Set / Mandelbrot ────────────────────────────────────────────
+// Background task renders escape-time array (200×120) into PSRAM double-buffer.
+// tick() (LVGL task): maps escape counts → HSV palette, writes 4×4 px blocks.
+//
+// Coordinate range (Julia):   zr ∈ [-1.75, 1.75], zi ∈ [-1.0, 1.0]
+// c parameter from audio:      c_real ← bass_energy, c_imag ← treble_energy
+// Mandelbrot: standard c=pixel, z starts at (0,0). toggled by 1.5s touch hold.
+
+static constexpr int   JULIA_W       = 200;
+static constexpr int   JULIA_H       = 120;
+static constexpr int   JULIA_MAX_ITER = 64;
+static constexpr int   JULIA_SCALE   = 4;    // upscale factor → 800×480
+static constexpr float JULIA_RE_SPAN = 3.5f; // real axis full span
+static constexpr float JULIA_IM_SPAN = 2.0f; // imaginary axis full span
+
+// ── Julia state ───────────────────────────────────────────────────────────────
+
+// Escape-time double buffer (each 24 KB, PSRAM)
+static uint8_t *s_julia_buf_front = nullptr;
+static uint8_t *s_julia_buf_back  = nullptr;
+
+// Render task
+static TaskHandle_t    s_julia_task     = nullptr;
+static SemaphoreHandle_t s_frame_ready  = nullptr;
+
+// Render parameters (written by tick, read by render task — atomic where possible)
+static std::atomic<float> s_c_real{-0.4f};
+static std::atomic<float> s_c_imag{ 0.6f};
+static std::atomic<float> s_zoom_atomic{1.0f};
+static std::atomic<float> s_zoom_cx_atomic{0.0f};
+static std::atomic<float> s_zoom_cy_atomic{0.0f};
+static std::atomic<bool>  s_mandelbrot_mode{false};
+static std::atomic<bool>  s_julia_running{false};
+
+// Palette animation state (LVGL task only)
+static float s_phase_offset   = 0.0f;
+
+// Zoom state (LVGL task only)
+static float s_zoom           = 1.0f;
+static float s_zoom_cx        = 0.0f;
+static float s_zoom_cy        = 0.0f;
+static float s_loudness_integral = 0.0f;
+
+// Touch hold detection (LVGL task only)
+static uint32_t s_touch_down_ms  = 0;
+static int      s_touch_down_x   = -1;
+static int      s_touch_down_y   = -1;
+static bool     s_touch_held     = false;
+
+// Mandelbrot autonomous zoom state
+static uint32_t s_mandel_tick_count   = 0;
+static int      s_mandel_center_idx   = 0;
+static const float k_interesting[][2] = {
+    {-0.75f,  0.10f},
+    {-0.12f,  0.74f},
+    { 0.28f,  0.01f},
+    {-1.40f,  0.00f},
+};
+static constexpr int k_interesting_count =
+    (int)(sizeof(k_interesting) / sizeof(k_interesting[0]));
+
+// ── Render task ───────────────────────────────────────────────────────────────
+// Runs on Core 0, Priority 2. Computes escape-time for the back buffer,
+// then gives the semaphore so tick() can swap and display.
+// MUST NOT call any LVGL API.
+
+static void julia_render_task(void *pvParam)
+{
+    (void)pvParam;
+
+    while (s_julia_running.load(std::memory_order_relaxed)) {
+        // Read current parameters atomically
+        float cr   = s_c_real.load(std::memory_order_relaxed);
+        float ci   = s_c_imag.load(std::memory_order_relaxed);
+        float zoom = s_zoom_atomic.load(std::memory_order_relaxed);
+        float cx   = s_zoom_cx_atomic.load(std::memory_order_relaxed);
+        float cy   = s_zoom_cy_atomic.load(std::memory_order_relaxed);
+        bool  mand = s_mandelbrot_mode.load(std::memory_order_relaxed);
+
+        float half_re = (JULIA_RE_SPAN * 0.5f) / zoom;
+        float half_im = (JULIA_IM_SPAN * 0.5f) / zoom;
+
+        uint8_t *buf = s_julia_buf_back;
+        if (!buf) { vTaskDelay(pdMS_TO_TICKS(33)); continue; }
+
+        for (int py = 0; py < JULIA_H; py++) {
+            float zi_pixel = cy + ((float)py / (float)JULIA_H - 0.5f) * (half_im * 2.0f);
+
+            for (int px = 0; px < JULIA_W; px++) {
+                float zr_pixel = cx + ((float)px / (float)JULIA_W - 0.5f) * (half_re * 2.0f);
+
+                float zr, zi, crit_r, crit_i;
+                if (mand) {
+                    // Mandelbrot: c = pixel, z starts at (0,0)
+                    zr     = 0.0f;
+                    zi     = 0.0f;
+                    crit_r = zr_pixel;
+                    crit_i = zi_pixel;
+                } else {
+                    // Julia: z = pixel, c = audio-driven
+                    zr     = zr_pixel;
+                    zi     = zi_pixel;
+                    crit_r = cr;
+                    crit_i = ci;
+                }
+
+                int iter = 0;
+                while (iter < JULIA_MAX_ITER) {
+                    float zr2 = zr * zr;
+                    float zi2 = zi * zi;
+                    if (zr2 + zi2 > 4.0f) break;
+                    float tmp = zr2 - zi2 + crit_r;
+                    zi  = 2.0f * zr * zi + crit_i;
+                    zr  = tmp;
+                    iter++;
+                }
+
+                // 0 = in-set (never escaped), 1..63 = escaped at iteration
+                buf[py * JULIA_W + px] = (iter >= JULIA_MAX_ITER) ? 0 : (uint8_t)iter;
+            }
+        }
+
+        // Signal tick() that a new frame is ready
+        xSemaphoreGive(s_frame_ready);
+
+        // Yield briefly so tick() can swap before we overwrite again
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+
+    vTaskDelete(nullptr);
+}
+
+// ── Julia init / deinit ───────────────────────────────────────────────────────
+
+static void mode7_init(lv_obj_t *canvas)
+{
+    clear_canvas(canvas);
+
+    // Allocate double buffer in PSRAM
+    s_julia_buf_front = static_cast<uint8_t *>(
+        heap_caps_malloc(JULIA_W * JULIA_H, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    s_julia_buf_back  = static_cast<uint8_t *>(
+        heap_caps_malloc(JULIA_W * JULIA_H, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+
+    if (s_julia_buf_front) memset(s_julia_buf_front, 0, JULIA_W * JULIA_H);
+    if (s_julia_buf_back)  memset(s_julia_buf_back,  0, JULIA_W * JULIA_H);
+
+    // Reset state
+    s_phase_offset      = 0.0f;
+    s_zoom              = 1.0f;
+    s_zoom_cx           = 0.0f;
+    s_zoom_cy           = 0.0f;
+    s_loudness_integral = 0.0f;
+    s_touch_down_ms     = 0;
+    s_touch_held        = false;
+    s_mandel_tick_count = 0;
+    s_mandel_center_idx = 0;
+
+    s_zoom_atomic.store(1.0f,  std::memory_order_relaxed);
+    s_zoom_cx_atomic.store(0.0f, std::memory_order_relaxed);
+    s_zoom_cy_atomic.store(0.0f, std::memory_order_relaxed);
+    s_c_real.store(-0.4f, std::memory_order_relaxed);
+    s_c_imag.store( 0.6f, std::memory_order_relaxed);
+    s_mandelbrot_mode.store(false, std::memory_order_relaxed);
+
+    // Create semaphore (binary)
+    s_frame_ready = xSemaphoreCreateBinary();
+
+    // Launch render task (Core 0, priority 2, 3072 byte stack)
+    s_julia_running.store(true, std::memory_order_relaxed);
+    xTaskCreatePinnedToCore(julia_render_task, "julia_render",
+                            3072, nullptr, 2, &s_julia_task, 0);
+}
+
+static void mode7_deinit(lv_obj_t *)
+{
+    // Signal task to stop, then wait for it to exit
+    s_julia_running.store(false, std::memory_order_relaxed);
+
+    // Give the semaphore in case the task is blocking on it
+    if (s_frame_ready) xSemaphoreGive(s_frame_ready);
+
+    // Give task time to exit gracefully (it calls vTaskDelete on itself)
+    vTaskDelay(pdMS_TO_TICKS(60));
+    s_julia_task = nullptr;
+
+    if (s_frame_ready) {
+        vSemaphoreDelete(s_frame_ready);
+        s_frame_ready = nullptr;
+    }
+
+    heap_caps_free(s_julia_buf_front);
+    heap_caps_free(s_julia_buf_back);
+    s_julia_buf_front = nullptr;
+    s_julia_buf_back  = nullptr;
+}
+
+// ── Julia tick (LVGL task) ────────────────────────────────────────────────────
+
+static void mode7_tick(lv_obj_t *canvas, uint32_t /*t_ms*/)
+{
+    snap_packet();
+
+    // --- Read current audio packet ---
+    float momentary_norm = fmaxf(0.0f, fminf(1.0f,
+        (s_pkt.momentary + 60.0f) / 60.0f));
+
+    // Bass and treble energies for c parameter
+    float bass_e   = 0.0f;
+    float treble_e = 0.0f;
+    for (int i = 0;   i <= 20;  i++) bass_e   += s_pkt.bins[i];
+    for (int i = 150; i <= 255; i++) treble_e += s_pkt.bins[i];
+    bass_e   /= 21.0f;
+    treble_e /= 106.0f;
+
+    // Spectral flatness proxy
+    float bin_mean = 0.0f, bin_max = 0.0f;
+    for (int i = 0; i < 256; i++) {
+        bin_mean += s_pkt.bins[i];
+        if (s_pkt.bins[i] > bin_max) bin_max = s_pkt.bins[i];
+    }
+    bin_mean /= 256.0f;
+    float flatness_proxy = (bin_max > 0.01f)
+        ? fminf(1.0f, bin_mean / bin_max * 4.0f) : 0.5f;
+
+    // BPM from Studio One, fallback 120
+    float bpm = 120.0f;
+    {
+        StudioOneState s1{};
+        if (xQueuePeek(g_studio_one_queue, &s1, 0) == pdTRUE && s1.bpm > 0.0f) {
+            bpm = s1.bpm;
+        }
+    }
+
+    // --- Update c parameter (Julia only) ---
+    if (!s_mandelbrot_mode.load(std::memory_order_relaxed)) {
+        float cr = (bass_e   - 0.5f) * 1.6f;
+        float ci = (treble_e - 0.5f) * 0.8f;
+        cr = fmaxf(-0.8f, fminf(0.8f, cr));
+        ci = fmaxf(-0.4f, fminf(0.4f, ci));
+        s_c_real.store(cr, std::memory_order_relaxed);
+        s_c_imag.store(ci, std::memory_order_relaxed);
+    }
+
+    // --- Zoom system ---
+    s_loudness_integral += momentary_norm * 0.0002f;
+
+    if (s_mandelbrot_mode.load(std::memory_order_relaxed)) {
+        // Mandelbrot: slow autonomous zoom
+        s_zoom *= 1.00005f;
+
+        // Cycle through interesting coordinates every 900 ticks (~30s)
+        s_mandel_tick_count++;
+        if (s_mandel_tick_count >= 900) {
+            s_mandel_tick_count = 0;
+            s_mandel_center_idx = (s_mandel_center_idx + 1) % k_interesting_count;
+            // Set new center and reset zoom
+            s_zoom    = 1.0f;
+            s_zoom_cx = k_interesting[s_mandel_center_idx][0];
+            s_zoom_cy = k_interesting[s_mandel_center_idx][1];
+            s_zoom_cx_atomic.store(s_zoom_cx, std::memory_order_relaxed);
+            s_zoom_cy_atomic.store(s_zoom_cy, std::memory_order_relaxed);
+        }
+    } else {
+        // Julia: loudness-integral creep + peak transient jump
+        s_zoom += s_loudness_integral;
+        s_loudness_integral = 0.0f;  // consume the integral
+
+        // Peak transient jump: peak_l or peak_r > -6 dBFS
+        if (s_pkt.peak_l > -6.0f || s_pkt.peak_r > -6.0f) {
+            s_zoom *= 1.05f;
+        }
+    }
+
+    // Clamp zoom
+    s_zoom = fminf(s_zoom, 8.0f);
+    s_zoom = fmaxf(s_zoom, 0.5f);
+    s_zoom_atomic.store(s_zoom, std::memory_order_relaxed);
+
+    // --- Touch hold: check for Mandelbrot toggle (1500ms) ---
+    if (s_touch_held) {
+        uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000LL);
+        if (now_ms - s_touch_down_ms >= 1500) {
+            s_touch_held = false;  // consume the hold
+            bool mand = !s_mandelbrot_mode.load(std::memory_order_relaxed);
+            s_mandelbrot_mode.store(mand, std::memory_order_relaxed);
+            // Reset zoom when toggling
+            s_zoom              = 1.0f;
+            s_zoom_cx           = 0.0f;
+            s_zoom_cy           = 0.0f;
+            s_loudness_integral = 0.0f;
+            s_mandel_tick_count = 0;
+            s_mandel_center_idx = 0;
+            s_zoom_atomic.store(1.0f, std::memory_order_relaxed);
+            s_zoom_cx_atomic.store(0.0f, std::memory_order_relaxed);
+            s_zoom_cy_atomic.store(0.0f, std::memory_order_relaxed);
+            if (mand) {
+                // Set first interesting center immediately
+                s_zoom_cx = k_interesting[0][0];
+                s_zoom_cy = k_interesting[0][1];
+                s_zoom_cx_atomic.store(s_zoom_cx, std::memory_order_relaxed);
+                s_zoom_cy_atomic.store(s_zoom_cy, std::memory_order_relaxed);
+            }
+        }
+    }
+
+    // --- Phase offset (palette animation, BPM-driven) ---
+    // At 30Hz (33ms ticks): phase_offset += bpm/60 * 0.033 * 2*PI
+    s_phase_offset += (bpm / 60.0f) * 0.033f * TWO_PI;
+    if (s_phase_offset > TWO_PI) s_phase_offset -= TWO_PI;
+
+    // --- Check if a new frame is ready from the render task ---
+    if (xSemaphoreTake(s_frame_ready, 0) != pdTRUE) {
+        // No new frame yet — skip drawing this tick
+        return;
+    }
+
+    // Swap front/back buffers
+    uint8_t *tmp      = s_julia_buf_front;
+    s_julia_buf_front = s_julia_buf_back;
+    s_julia_buf_back  = tmp;
+
+    // --- Colour mapping: escape_buf → canvas pixels (4×4 block per pixel) ---
+    const VisualPalette *pal = visuals_get_palette();
+
+    // Pre-compute saturation from spectral flatness
+    float sat = 1.0f - flatness_proxy * 0.5f;  // 0.5..1.0
+
+    // Pre-compute value scale from loudness
+    float val_scale = 0.4f + momentary_norm * 0.6f;  // 0.4..1.0
+
+    // bg_tint as fallback for in-set pixels (escape count == 0)
+    lv_color_t bg = pal->bg_tint;
+
+    for (int py = 0; py < JULIA_H; py++) {
+        int canvas_y0 = py * JULIA_SCALE;
+
+        for (int px = 0; px < JULIA_W; px++) {
+            int canvas_x0 = px * JULIA_SCALE;
+
+            uint8_t esc = s_julia_buf_front[py * JULIA_W + px];
+
+            lv_color_t col;
+            if (esc == 0) {
+                // In-set pixel: use bg_tint
+                col = bg;
+            } else {
+                // Map escape count to hue with phase offset cycling
+                float t = ((float)esc + s_phase_offset / TWO_PI * JULIA_MAX_ITER)
+                          / (float)JULIA_MAX_ITER;
+                t = t - floorf(t);  // wrap 0..1
+
+                float val = val_scale;
+                col = hsv_to_color(t, sat, val);
+            }
+
+            // Write 4×4 block to canvas
+            for (int dy = 0; dy < JULIA_SCALE; dy++) {
+                int cy2 = canvas_y0 + dy;
+                if ((unsigned)cy2 >= CH) continue;
+                for (int dx = 0; dx < JULIA_SCALE; dx++) {
+                    int cx2 = canvas_x0 + dx;
+                    if ((unsigned)cx2 >= CW) continue;
+                    lv_canvas_set_px(canvas, cx2, cy2, col, LV_OPA_COVER);
+                }
+            }
+        }
+    }
+}
+
+// ── Julia touch ───────────────────────────────────────────────────────────────
+
+static void mode7_touch(lv_obj_t *, int x, int y)
+{
+    uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000LL);
+
+    // If this is the first touch in this hold sequence, record it
+    if (!s_touch_held || s_touch_down_ms == 0) {
+        s_touch_down_ms = now_ms;
+        s_touch_down_x  = x;
+        s_touch_down_y  = y;
+        s_touch_held    = true;
+    }
+
+    // On a quick tap (time elapsed < 400ms and position not far from down):
+    // move zoom center. The hold toggle is handled in tick().
+    uint32_t elapsed = now_ms - s_touch_down_ms;
+    int dx = x - s_touch_down_x;
+    int dy = y - s_touch_down_y;
+    bool moved = (dx * dx + dy * dy) > (30 * 30);
+
+    if (elapsed < 400 && !moved) {
+        // Map touch to fractal coordinate at current zoom
+        float new_cx = (x / (float)CW - 0.5f) * JULIA_RE_SPAN / s_zoom + s_zoom_cx;
+        float new_cy = (y / (float)CH - 0.5f) * JULIA_IM_SPAN / s_zoom + s_zoom_cy;
+        s_zoom_cx = new_cx;
+        s_zoom_cy = new_cy;
+        s_zoom_cx_atomic.store(s_zoom_cx, std::memory_order_relaxed);
+        s_zoom_cy_atomic.store(s_zoom_cy, std::memory_order_relaxed);
+    }
+
+    // If user moved finger, cancel hold detection
+    if (moved) {
+        s_touch_held    = false;
+        s_touch_down_ms = 0;
+    }
+}
 
 // ── Dispatch table ────────────────────────────────────────────────────────────
 
@@ -656,14 +1069,14 @@ struct VisualMode {
 };
 
 static const VisualMode DISPATCH[8] = {
-    { mode0_init,      mode0_tick,      mode0_touch,      mode0_deinit      },  // 0: Lissajous
-    { mode1_init,      mode1_tick,      mode1_touch,      mode1_deinit      },  // 1: Circular FFT
-    { mode2_init,      mode2_tick,      mode2_touch,      mode2_deinit      },  // 2: Aurora
-    { mode3_init,      mode3_tick,      mode3_touch,      mode3_deinit      },  // 3: Bass Pulse
-    { mode4_init,      mode4_tick,      mode4_touch,      mode4_deinit      },  // 4: Terrain
-    { mode_stub_init,  mode_stub_tick,  mode_stub_touch,  mode_stub_deinit  },  // 5: Particles (WP-E)
-    { mode_stub_init,  mode_stub_tick,  mode_stub_touch,  mode_stub_deinit  },  // 6: Game of Life (WP-E)
-    { mode_stub_init,  mode_stub_tick,  mode_stub_touch,  mode_stub_deinit  },  // 7: Julia Set (WP-C)
+    { mode0_init,  mode0_tick,  mode0_touch,  mode0_deinit  },  // 0: Lissajous
+    { mode1_init,  mode1_tick,  mode1_touch,  mode1_deinit  },  // 1: Circular FFT
+    { mode2_init,  mode2_tick,  mode2_touch,  mode2_deinit  },  // 2: Aurora
+    { mode3_init,  mode3_tick,  mode3_touch,  mode3_deinit  },  // 3: Bass Pulse
+    { mode4_init,  mode4_tick,  mode4_touch,  mode4_deinit  },  // 4: Terrain
+    { mode_stub_init, mode_stub_tick, mode_stub_touch, mode_stub_deinit },  // 5: Particles (WP-E)
+    { mode_stub_init, mode_stub_tick, mode_stub_touch, mode_stub_deinit },  // 6: Game of Life (WP-E)
+    { mode7_init,  mode7_tick,  mode7_touch,  mode7_deinit  },  // 7: Julia Set / Mandelbrot
 };
 
 void visuals_mode_init(int idx, lv_obj_t *canvas)
