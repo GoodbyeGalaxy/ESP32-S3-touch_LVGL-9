@@ -23,3 +23,7 @@ CONFIG_LV_USE_GESTURE_RECOGNITION=y
 
 # ── TinyUSB — USB MIDI Class Device ──────────────────────────────────────────
 CONFIG_TINYUSB_MIDI_COUNT=1
+
+# ── Phase 6: Studio One WebSocket ────────────────────────────────────────────
+CONFIG_WS_HOST="192.168.1.100"
+CONFIG_WS_PORT=4211

@@ -19,3 +19,19 @@ menu "Studio Panel WiFi"
             Reject open or WEP networks; require at least WPA2-PSK.
 
 endmenu
+
+menu "Studio Panel WebSocket"
+
+    config WS_HOST
+        string "WebSocket server host"
+        default "192.168.1.100"
+        help
+            IP or hostname of the Mac helper running the Studio One WebSocket server.
+
+    config WS_PORT
+        int "WebSocket server port"
+        default 4211
+        help
+            TCP port for the WebSocket server (/studio-one endpoint).
+
+endmenu

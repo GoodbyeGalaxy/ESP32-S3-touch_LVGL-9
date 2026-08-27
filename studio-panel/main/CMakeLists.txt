@@ -1,6 +1,7 @@
 idf_component_register(
     SRCS
         "main.cpp"
+        "ws_client.cpp"
         "theme.cpp"
         "audio_data.cpp"
         "ch422g.cpp"
@@ -43,4 +44,6 @@ idf_component_register(
         esp_event
         nvs_flash
         esp_driver_gpio
+        esp_websocket_client
+        json
 )

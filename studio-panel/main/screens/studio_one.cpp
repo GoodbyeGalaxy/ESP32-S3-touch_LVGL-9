@@ -1,4 +1,6 @@
 #include "studio_one.h"
+#include "studio_one_data.h"
+#include "ws_client.h"
 #include "theme.h"
 #include "screens/home.h"
 #include "screens/touch_nav.h"
@@ -7,8 +9,78 @@
 #include "screens/statusbar.h"
 #include "lvgl.h"
 
-// Transport/session display for Studio One DAW integration (Phase 5: WebSocket).
-// Currently shows a static mockup; live data arrives via WebSocket when implemented.
+// Transport/session display for Studio One DAW integration (Phase 6: WebSocket).
+// Live data arrives from g_studio_one_queue written by ws_client.cpp.
+
+// ── Widget refs shared with the timer callback ────────────────────────────────
+
+struct ScreenWidgets {
+    lv_obj_t *bpm_val;
+    lv_obj_t *timesig;
+    lv_obj_t *pos_val;
+    lv_obj_t *state_lbl;
+    lv_obj_t *conn_pill;
+    lv_obj_t *conn_lbl;
+};
+
+// ── Timer callback — runs in LVGL task, safe to update widgets directly ───────
+
+// IN: lv_timer_t* with user_data pointing to ScreenWidgets. OUT: nothing.
+// Polls g_studio_one_queue (non-destructive) and refreshes all transport labels.
+static void transport_timer_cb(lv_timer_t *t)
+{
+    auto *w = static_cast<ScreenWidgets*>(lv_timer_get_user_data(t));
+
+    // Connection pill
+    bool connected = ws_client_connected();
+    lv_obj_set_style_bg_color(w->conn_pill,
+        lv_color_hex(connected ? 0x2E7D32 : 0x707070), 0);
+    lv_label_set_text(w->conn_lbl, connected ? "Connected" : "Disconnected");
+    lv_obj_set_style_text_color(w->conn_lbl,
+        connected ? lv_color_hex(0xA5D6A7) : THEME_TEXT_HINT, 0);
+
+    // Transport data
+    StudioOneState state = {};
+    if (!g_studio_one_queue || xQueuePeek(g_studio_one_queue, &state, 0) != pdTRUE) {
+        lv_label_set_text(w->bpm_val, "---");
+        lv_label_set_text(w->timesig, "- / -");
+        lv_label_set_text(w->pos_val, "---");
+        lv_label_set_text(w->state_lbl, LV_SYMBOL_STOP "  STOPPED");
+        lv_obj_set_style_text_color(w->state_lbl, THEME_TEXT_SECONDARY, 0);
+        return;
+    }
+
+    // BPM
+    if (state.bpm > 0.0f) {
+        char bpm_buf[16];
+        snprintf(bpm_buf, sizeof(bpm_buf), "%.1f", state.bpm);
+        lv_label_set_text(w->bpm_val, bpm_buf);
+    } else {
+        lv_label_set_text(w->bpm_val, "---");
+    }
+
+    lv_label_set_text(w->timesig, state.timesig[0] ? state.timesig : "4 / 4");
+    lv_label_set_text(w->pos_val, state.pos[0] ? state.pos : "---");
+
+    switch (state.state) {
+    case TransportState::Playing:
+        lv_label_set_text(w->state_lbl, LV_SYMBOL_PLAY "  PLAYING");
+        lv_obj_set_style_text_color(w->state_lbl, lv_color_hex(0x4CAF50), 0);
+        break;
+    case TransportState::Recording:
+        lv_label_set_text(w->state_lbl, LV_SYMBOL_AUDIO "  REC");
+        lv_obj_set_style_text_color(w->state_lbl, lv_color_hex(0xFF4444), 0);
+        break;
+    case TransportState::Paused:
+        lv_label_set_text(w->state_lbl, LV_SYMBOL_PAUSE "  PAUSED");
+        lv_obj_set_style_text_color(w->state_lbl, THEME_TEXT_HINT, 0);
+        break;
+    default:
+        lv_label_set_text(w->state_lbl, LV_SYMBOL_STOP "  STOPPED");
+        lv_obj_set_style_text_color(w->state_lbl, THEME_TEXT_SECONDARY, 0);
+        break;
+    }
+}
 
 // ── Navigation ────────────────────────────────────────────────────────────────
 
@@ -26,6 +98,9 @@ lv_obj_t *studio_one_screen_create()
     lv_obj_t *scr = theme_make_screen();
 
     statusbar_set_screen_name("STUDIO ONE");
+
+    // Persist widget refs for the timer; lives as long as the screen exists.
+    static ScreenWidgets s_widgets = {};
 
     // ── Status bar zone: title + connection pill ──────────────────────────────
     lv_obj_t *title = lv_label_create(scr);
@@ -47,6 +122,9 @@ lv_obj_t *studio_one_screen_create()
     lv_obj_set_style_text_color(conn_lbl, THEME_TEXT_HINT, 0);
     lv_obj_set_style_text_font(conn_lbl, THEME_FONT_HINT, 0);
     lv_obj_center(conn_lbl);
+
+    s_widgets.conn_pill = conn_pill;
+    s_widgets.conn_lbl  = conn_lbl;
 
     // ── BPM card (centre-left) ────────────────────────────────────────────────
     lv_obj_t *bpm_card = lv_obj_create(scr);
@@ -83,6 +161,9 @@ lv_obj_t *studio_one_screen_create()
     lv_obj_set_style_text_font(timesig, THEME_FONT_HINT, 0);
     lv_obj_align(timesig, LV_ALIGN_BOTTOM_MID, 0, -14);
 
+    s_widgets.bpm_val = bpm_val;
+    s_widgets.timesig = timesig;
+
     // ── Position card (centre-right) ──────────────────────────────────────────
     lv_obj_t *pos_card = lv_obj_create(scr);
     lv_obj_remove_style_all(pos_card);
@@ -101,7 +182,7 @@ lv_obj_t *studio_one_screen_create()
     lv_obj_align(pos_hint, LV_ALIGN_TOP_MID, 0, 12);
 
     lv_obj_t *pos_val = lv_label_create(pos_card);
-    lv_label_set_text(pos_val, "001.01.000");
+    lv_label_set_text(pos_val, "---");
     lv_obj_set_style_text_color(pos_val, THEME_TEXT_TITLE, 0);
     lv_obj_set_style_text_font(pos_val, THEME_FONT_TITLE, 0);
     lv_obj_align(pos_val, LV_ALIGN_CENTER, 0, -10);
@@ -111,6 +192,9 @@ lv_obj_t *studio_one_screen_create()
     lv_obj_set_style_text_color(state_lbl, THEME_TEXT_SECONDARY, 0);
     lv_obj_set_style_text_font(state_lbl, THEME_FONT_HINT, 0);
     lv_obj_align(state_lbl, LV_ALIGN_BOTTOM_MID, 0, -14);
+
+    s_widgets.pos_val   = pos_val;
+    s_widgets.state_lbl = state_lbl;
 
     // ── Transport buttons ─────────────────────────────────────────────────────
     static const char *BTNS[]   = { LV_SYMBOL_PREV, LV_SYMBOL_STOP,
@@ -132,8 +216,10 @@ lv_obj_t *studio_one_screen_create()
     }
 
     foot_create(scr);
-
     touch_nav_attach_2d(scr, on_swipe, nullptr);
+
+    // 33 ms ≈ 30 Hz — matches UDP data rate
+    lv_timer_create(transport_timer_cb, 33, &s_widgets);
 
     return scr;
 }

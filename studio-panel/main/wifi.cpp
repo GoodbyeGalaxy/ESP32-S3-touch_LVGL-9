@@ -1,5 +1,6 @@
 #include "wifi.h"
 #include "net_receiver.h"
+#include "ws_client.h"
 #include "screens/statusbar.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
@@ -45,6 +46,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t base,
         if (ip_buf) snprintf(ip_buf, 16, IPSTR, IP2STR(&event->ip_info.ip));
         lv_async_call(wifi_statusbar_async, ip_buf);
         net_receiver_start();  // safe to call multiple times — idempotent
+        ws_client_start();     // safe to call multiple times — idempotent
         // Start SNTP time sync (idempotent — safe to call again on reconnect)
         if (!esp_sntp_enabled()) {
             setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1);
