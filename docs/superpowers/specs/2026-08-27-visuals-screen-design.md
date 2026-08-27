@@ -262,16 +262,80 @@ vom Signal-Status. Nützlich um Visuals zu betrachten ohne MAC laufen zu lassen.
 
 ---
 
-## Demo-Toggle-Button (Visuals Fullscreen)
+## Farb-Paletten-System
 
-Kleines "DEMO" Pill-Button, floating bottom-right im Visuals-Fullscreen-Screen,
-über dem Foot-Bar. Implementierung via `lv_obj_t` mit `LV_LAYER_TOP`-ähnlicher
-Positionierung direkt auf dem Screen-Objekt.
+Alle Visual-Modi beziehen ihre Farben ausschließlich aus der aktiven Palette.
+Der Mood Score moduliert nur Helligkeit/Sättigung — nie den Hue.
 
-- **Inaktiv:** Hintergrund `THEME_BG_CARD`, Text "DEMO", Schrift `THEME_FONT_HINT`
-- **Aktiv:** Hintergrund `lv_color_hex(0xE65100)` (Orange), Text "DEMO ●"
-- Größe: 80×28px, Radius 14 (Pill-Form), Position: bottom-right, 12px Margin
-- Tap togglet `demo_signal_set_forced()` und aktualisiert Button-Style sofort
+### Palette-Struct (in visuals.h)
+```cpp
+struct VisualPalette {
+    const char  *name;
+    lv_color_t   primary;    // main content (curves, particles, rings)
+    lv_color_t   secondary;  // trails, fades, background glow
+    lv_color_t   accent;     // peaks, beats, transients
+    lv_color_t   bg_tint;    // subtle background tint (very dark)
+};
+```
+
+### 5 Paletten (exakte RGB-Werte)
+```cpp
+// 0 — Phosphor: klassischer grün-cyan Monitorlook
+{.name="PHOSPHOR", .primary=0x00E5FF, .secondary=0x00838F, .accent=0x69FF47, .bg_tint=0x000A08}
+
+// 1 — Noir: monochrom weiß, minimal, zeitlos
+{.name="NOIR",     .primary=0xE0E0E0, .secondary=0x505050, .accent=0xFFFFFF, .bg_tint=0x080808}
+
+// 2 — Synthwave: magenta/cyan, 80s dramatik
+{.name="SYNTHWAVE",.primary=0xFF0080, .secondary=0x6A0080, .accent=0x00FFFF, .bg_tint=0x0A0010}
+
+// 3 — Solar: warm, organisch, gold
+{.name="SOLAR",    .primary=0xFFB300, .secondary=0x5D3200, .accent=0xFF6D00, .bg_tint=0x0A0600}
+
+// 4 — Arctic: kalt, ruhig, eisblau
+{.name="ARCTIC",   .primary=0x80D8FF, .secondary=0x003D5C, .accent=0xE0F7FF, .bg_tint=0x00080A}
+```
+
+**Default:** Phosphor (Index 0). NVS-persistent unter Key `"palette"`.
+
+### Pro-Modus Palette Override (optional, Phase 2)
+Jeder VisualMode kann eine bevorzugte Palette-ID angeben (`preferred_palette = -1` = globale).
+Beim Moduswechsel: falls `preferred_palette >= 0`, wird diese Palette temporär aktiviert.
+Beispiel: Game of Life bevorzugt Phosphor (grünes Terminal-Feeling).
+
+---
+
+## Demo-Toggle + Palette-Button (Visuals Fullscreen)
+
+Zwei kleine Pill-Buttons, floating bottom-right, über dem Foot-Bar.
+Positioniert direkt auf dem Screen-Objekt (nicht auf lv_layer_top).
+
+**Layout (von rechts nach links, 12px Margin, 8px Abstand zwischen Pills):**
+```
+[SCREEN] ........ [DEMO] [🎨 PALETTE]
+                                     ←12px
+```
+
+**DEMO-Pill** (links von Palette):
+- Inaktiv: `THEME_BG_CARD` BG + "DEMO" Text `THEME_TEXT_HINT`
+- Aktiv: `lv_color_hex(0xE65100)` BG + "DEMO ●" Text weiß
+- Größe: 76×28px, Radius 14
+
+**PALETTE-Pill** (ganz rechts):
+- Immer: `THEME_BG_CARD` BG + "PALETTE" Text `THEME_TEXT_HINT`
+- Größe: 96×28px, Radius 14
+- Kleines Farb-Dot (8px Kreis) links vom Text in der aktiven Palette-Primary-Farbe
+
+**Palette-Overlay** (erscheint bei Tap auf PALETTE-Pill):
+- Semi-transparentes dunkles Panel (400×60px), zentriert horizontal, 50px über Foot-Bar
+- Hintergrund `lv_color_hex(0x111111)`, Opacity 230, Radius 12
+- 5 Pills nebeneinander (je 64×40px, Radius 8):
+  - Hintergrund = Palette-Primary-Farbe (gedimmt ×0.4)
+  - Rand = Palette-Primary-Farbe (2px)
+  - Text = Palette-Name in `THEME_FONT_HINT`
+  - Aktive Palette: volle Helligkeit + weißer Rand
+- Tap auf Pill → Palette wechseln + Overlay schließen
+- Tap außerhalb Overlay → Overlay schließen ohne Änderung
 
 ---
 
