@@ -114,26 +114,27 @@ void MeterEngine::tick_demo(float dt)
 
 void MeterEngine::update_ballistics(float dt)
 {
-    // VU: power averaging τ=300ms
-    constexpr float VU_ALPHA = 1.0f - 0.8953f; // 1 - exp(-0.033/0.30)
-    float p_l = powf(10.0f, r_.peak_l / 10.0f);
-    float p_r = powf(10.0f, r_.peak_r / 10.0f);
-    vu_pwr_l_ += VU_ALPHA * (p_l - vu_pwr_l_);
-    vu_pwr_r_ += VU_ALPHA * (p_r - vu_pwr_r_);
-    r_.vu_l = 10.0f * log10f(vu_pwr_l_ < 1e-12f ? 1e-12f : vu_pwr_l_);
-    r_.vu_r = 10.0f * log10f(vu_pwr_r_ < 1e-12f ? 1e-12f : vu_pwr_r_);
+    // VU: RMS power averaging τ=300ms (VU spec). Input: RMS, not peak.
+    float vu_alpha = 1.0f - expf(-dt / 0.30f);
+    float p_l = powf(10.0f, r_.rms_l / 10.0f);
+    float p_r = powf(10.0f, r_.rms_r / 10.0f);
+    vu_pwr_l_ += vu_alpha * (p_l - vu_pwr_l_);
+    vu_pwr_r_ += vu_alpha * (p_r - vu_pwr_r_);
+    // −18 dBFS = 0 VU (EBU standard). Offset applied here; will become configurable.
+    r_.vu_l = 10.0f * log10f(vu_pwr_l_ < 1e-12f ? 1e-12f : vu_pwr_l_) + 18.0f;
+    r_.vu_r = 10.0f * log10f(vu_pwr_r_ < 1e-12f ? 1e-12f : vu_pwr_r_) + 18.0f;
 
-    // PPM Type I: instant attack, 1.5 dB/s decay
-    constexpr float D1 = 1.5f * 0.033f;
-    ppm_i_l_ = r_.peak_l > ppm_i_l_ ? r_.peak_l : std::max(ppm_i_l_ - D1, -60.0f);
-    ppm_i_r_ = r_.peak_r > ppm_i_r_ ? r_.peak_r : std::max(ppm_i_r_ - D1, -60.0f);
+    // PPM Type I (IEC 60268-10 Typ I, Nordic/EBU): instant attack, 20dB/2800ms = 7.14 dB/s decay
+    float d1 = 7.14f * dt;
+    ppm_i_l_ = r_.peak_l > ppm_i_l_ ? r_.peak_l : std::max(ppm_i_l_ - d1, -60.0f);
+    ppm_i_r_ = r_.peak_r > ppm_i_r_ ? r_.peak_r : std::max(ppm_i_r_ - d1, -60.0f);
     r_.ppm_i_l = ppm_i_l_;
     r_.ppm_i_r = ppm_i_r_;
 
-    // PPM Type II: instant attack, 4.7 dB/s decay
-    constexpr float D2 = 4.7f * 0.033f;
-    ppm_ii_l_ = r_.peak_l > ppm_ii_l_ ? r_.peak_l : std::max(ppm_ii_l_ - D2, -60.0f);
-    ppm_ii_r_ = r_.peak_r > ppm_ii_r_ ? r_.peak_r : std::max(ppm_ii_r_ - D2, -60.0f);
+    // PPM Type II (IEC 60268-10 Typ II, BBC): instant attack, 20dB/2000ms = 10.0 dB/s decay
+    float d2 = 10.0f * dt;
+    ppm_ii_l_ = r_.peak_l > ppm_ii_l_ ? r_.peak_l : std::max(ppm_ii_l_ - d2, -60.0f);
+    ppm_ii_r_ = r_.peak_r > ppm_ii_r_ ? r_.peak_r : std::max(ppm_ii_r_ - d2, -60.0f);
     r_.ppm_ii_l = ppm_ii_l_;
     r_.ppm_ii_r = ppm_ii_r_;
 

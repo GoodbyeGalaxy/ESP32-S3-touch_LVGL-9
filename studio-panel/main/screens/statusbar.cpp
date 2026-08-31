@@ -30,13 +30,12 @@ void statusbar_init()
     lv_obj_set_style_text_font(s_title, THEME_FONT_LABEL, 0);
     lv_obj_align(s_title, LV_ALIGN_LEFT_MID, 12, 0);
 
-    // Build-Timestamp zentriert — Montserrat 18, gut lesbar für Deploy-Verifikation
-    // Format: "Aug 24  21:43"  (__DATE__ liefert "Mmm DD YYYY", __TIME__ "HH:MM:SS")
+    // IP-Adresse zentriert — aktualisiert sich nach WiFi-Connect
     s_build = lv_label_create(s_bar);
     lv_obj_remove_style_all(s_build);
     lv_obj_set_size(s_build, 220, THEME_STATUSBAR_H);
     lv_label_set_long_mode(s_build, LV_LABEL_LONG_CLIP);
-    lv_label_set_text_fmt(s_build, "%.6s  %.5s", __DATE__, __TIME__);
+    lv_label_set_text(s_build, "");
     lv_obj_set_style_text_color(s_build, THEME_TEXT_PRIMARY, 0);
     lv_obj_set_style_text_font(s_build, THEME_FONT_LABEL, 0);
     lv_obj_set_style_text_align(s_build, LV_TEXT_ALIGN_CENTER, 0);
@@ -73,9 +72,15 @@ void statusbar_update_time(const char *time_str)
 void statusbar_update_wifi(bool connected, const char *ip_str)
 {
     if (!s_wifi) return;
-    // Symbol only — green when connected, gray when not. No IP displayed.
     lv_obj_set_style_text_color(s_wifi,
         connected ? lv_color_hex(0x22C55Eu) : THEME_TEXT_HINT, 0);
     lv_label_set_text(s_wifi, LV_SYMBOL_WIFI);
+
+    if (s_build) {
+        if (connected && ip_str && ip_str[0])
+            lv_label_set_text(s_build, ip_str);
+        else
+            lv_label_set_text(s_build, "");
+    }
 }
 

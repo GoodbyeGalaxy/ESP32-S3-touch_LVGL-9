@@ -29,8 +29,8 @@ static void time_tick_cb(lv_timer_t *)
 void ui_init()
 {
     esp_lv_adapter_config_t cfg = ESP_LV_ADAPTER_DEFAULT_CONFIG();
-    cfg.task_stack_size = 16384;
-    cfg.stack_in_psram  = true;
+    cfg.task_stack_size = 20480;   // 20 KB in DRAM — PSRAM stack competed with canvas DMA
+    cfg.stack_in_psram  = false;
     ESP_ERROR_CHECK(esp_lv_adapter_init(&cfg));
 
     esp_lv_adapter_display_config_t disp_cfg =

@@ -13,8 +13,8 @@ struct MeterReadings {
 
     // Ballistic outputs — all in dBFS
     float vu_l,     vu_r;           // VU (300ms RMS power avg)
-    float ppm_i_l,  ppm_i_r;        // PPM Type I  (EBU, decay 1.5 dB/s)
-    float ppm_ii_l, ppm_ii_r;       // PPM Type II (BBC, decay 4.7 dB/s)
+    float ppm_i_l,  ppm_i_r;        // PPM Type I  (IEC 60268-10 Nordic/EBU, 7.14 dB/s decay)
+    float ppm_ii_l, ppm_ii_r;       // PPM Type II (IEC 60268-10 BBC,        10.0 dB/s decay)
 
     // Peak hold (instantaneous, skin manages its own hold timer if needed)
     float peak_hold_l, peak_hold_r;

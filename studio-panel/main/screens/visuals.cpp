@@ -68,6 +68,8 @@ static int load_mode()
     return val < 8 ? (int)val : 0;
 }
 
+static lv_obj_t *s_palette_dot = nullptr;   // color dot on PALETTE pill (set in build_fullscreen)
+
 // IN: palette_index 0..4. OUT: nothing. Persists to NVS.
 static void save_palette(int idx)
 {
@@ -132,7 +134,6 @@ static lv_obj_t   *s_fs_scr     = nullptr;  // current fullscreen screen
 static lv_obj_t   *s_canvas     = nullptr;
 static lv_timer_t *s_render_timer = nullptr;
 static lv_obj_t   *s_demo_btn_lbl   = nullptr;  // label on DEMO pill button
-static lv_obj_t   *s_palette_dot    = nullptr;   // color dot on PALETTE pill
 
 // Per-mode PSRAM canvas buffer (800×480×4 bytes = 1.5 MB) — allocated once,
 // reused across mode switches to avoid repeated heap churn.
@@ -209,6 +210,7 @@ static void destroy_overlay(lv_event_t *e)
         }
     }
     lv_obj_delete(overlay);
+    if (s_render_timer) lv_timer_resume(s_render_timer);
 }
 
 static void on_palette_pill_click(lv_event_t *e)
@@ -221,6 +223,8 @@ static void on_palette_pill_click(lv_event_t *e)
 
     // Set palette (updates dot, saves to NVS)
     visuals_set_palette(idx);
+
+    if (s_render_timer) lv_timer_resume(s_render_timer);
 
     // Destroy overlay — also frees all children (and their user_data structs
     // are heap-allocated: clean up before delete)
@@ -243,6 +247,10 @@ static void on_palette_btn(lv_event_t *e)
 {
     lv_obj_t *screen = static_cast<lv_obj_t *>(lv_event_get_user_data(e));
     if (!screen) return;
+
+    // Pause render timer while overlay is open — prevents PSRAM canvas
+    // invalidation from fighting LVGL compositing (causes visible stall).
+    if (s_render_timer) lv_timer_pause(s_render_timer);
 
     // Overlay container — 800×90px, vertically above foot bar by 8px
     constexpr int OVL_H  = 90;
@@ -327,11 +335,20 @@ static void on_palette_btn(lv_event_t *e)
 
 // ── Render timer (fullscreen) ─────────────────────────────────────────────────
 
-// IN: lv_timer_t* user_data = canvas lv_obj_t*. OUT: nothing.
+// Per-screen data stored in screen user_data and timer user_data.
+// Keeps canvas + mode_idx bound to the screen that created them so that
+// on_fs_delete and visuals_render_tick remain correct during mode transitions.
+struct FsData {
+    lv_timer_t *timer;
+    lv_obj_t   *canvas;
+    int         mode_idx;
+};
+
+// IN: lv_timer_t* user_data = FsData*. OUT: nothing.
 void visuals_render_tick(lv_timer_t *t)
 {
-    lv_obj_t *canvas = static_cast<lv_obj_t *>(lv_timer_get_user_data(t));
-    if (!canvas) return;
+    FsData *fd = static_cast<FsData *>(lv_timer_get_user_data(t));
+    if (!fd) return;
 
     AudioPacket pkt{};
     if (xQueuePeek(g_audio_queue, &pkt, 0) == pdTRUE) {
@@ -339,7 +356,7 @@ void visuals_render_tick(lv_timer_t *t)
     }
 
     uint32_t t_ms = (uint32_t)(esp_timer_get_time() / 1000LL);
-    visuals_mode_tick(s_active_mode, canvas, t_ms);
+    visuals_mode_tick(fd->mode_idx, fd->canvas, t_ms);
 }
 
 // ── Fullscreen screen builder ─────────────────────────────────────────────────
@@ -371,62 +388,33 @@ static lv_obj_t *build_fullscreen(int mode_idx)
     lv_obj_t *canvas = lv_canvas_create(scr);
     lv_obj_set_pos(canvas, 0, 0);
     lv_obj_set_size(canvas, CANVAS_W, CANVAS_H);
+    lv_obj_clear_flag(canvas, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(canvas, LV_OBJ_FLAG_SCROLLABLE);
     if (s_canvas_buf) {
         lv_canvas_set_buffer(canvas, s_canvas_buf,
                              CANVAS_W, CANVAS_H, LV_COLOR_FORMAT_ARGB8888);
-        lv_canvas_fill_bg(canvas, lv_color_hex(0x0A0A0Au), LV_OPA_COVER);
+        // Direct PSRAM fill — avoids LVGL draw task allocation at init
+        lv_color32_t bg = { .blue=0x0A, .green=0x0A, .red=0x0A, .alpha=0xFF };
+        for (int i = 0; i < CANVAS_W * CANVAS_H; i++) s_canvas_buf[i] = bg;
+        lv_obj_invalidate(canvas);
     }
     s_canvas = canvas;
 
-    // Foot bar
-    foot_create(scr);
+    // Foot bar — capture right_zone for DEMO + PALETTE buttons
+    lv_obj_t *right_zone = foot_create(scr);
 
-    // Pill button layout (bottom-right, 12px outer margin, 8px gap between pills):
-    //   [DEMO 76×28] [PALETTE 96×28]  ←12px margin
-    // Both pills share the same Y (bottom of content area minus 12px).
-
-    constexpr int PILL_H        = 28;
-    constexpr int PILL_MARGIN   = 12;
-    constexpr int PILL_GAP      = 8;
-    constexpr int DEMO_W        = 76;
-    constexpr int PALETTE_W     = 96;
-    constexpr int PILL_Y        = 480 - THEME_FOOT_H - PILL_H - PILL_MARGIN;
-    constexpr int PALETTE_X     = 800 - PALETTE_W - PILL_MARGIN;
-    constexpr int DEMO_X        = PALETTE_X - PILL_GAP - DEMO_W;
-
-    // DEMO pill — 76×28px
-    lv_obj_t *demo_btn = lv_btn_create(scr);
-    lv_obj_remove_style_all(demo_btn);
-    lv_obj_set_size(demo_btn, DEMO_W, PILL_H);
-    lv_obj_set_pos(demo_btn, DEMO_X, PILL_Y);
-    lv_obj_set_style_bg_color(demo_btn, THEME_BG_CARD, 0);
-    lv_obj_set_style_bg_opa(demo_btn, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(demo_btn, 14, 0);
-    lv_obj_set_style_border_width(demo_btn, 0, 0);
-    lv_obj_add_flag(demo_btn, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(demo_btn, on_demo_btn, LV_EVENT_CLICKED, nullptr);
-
-    lv_obj_t *demo_lbl = lv_label_create(demo_btn);
-    lv_obj_remove_style_all(demo_lbl);
-    lv_label_set_text(demo_lbl, "DEMO");
-    lv_obj_set_style_text_color(demo_lbl, THEME_TEXT_HINT, 0);
-    lv_obj_set_style_text_font(demo_lbl, THEME_FONT_HINT, 0);
-    lv_obj_center(demo_lbl);
-    s_demo_btn_lbl = demo_lbl;
-    refresh_demo_btn();
-
-    // PALETTE pill — 96×28px, ganz rechts
-    lv_obj_t *pal_btn = lv_btn_create(scr);
+    // PALETTE button (96×40) — rightmost in foot bar
+    lv_obj_t *pal_btn = lv_btn_create(right_zone);
     lv_obj_remove_style_all(pal_btn);
-    lv_obj_set_size(pal_btn, PALETTE_W, PILL_H);
-    lv_obj_set_pos(pal_btn, PALETTE_X, PILL_Y);
+    lv_obj_set_size(pal_btn, 96, 40);
+    lv_obj_align(pal_btn, LV_ALIGN_RIGHT_MID, -8, 0);
     lv_obj_set_style_bg_color(pal_btn, THEME_BG_CARD, 0);
     lv_obj_set_style_bg_opa(pal_btn, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(pal_btn, 14, 0);
     lv_obj_set_style_border_width(pal_btn, 0, 0);
     lv_obj_add_flag(pal_btn, LV_OBJ_FLAG_CLICKABLE);
 
-    // Color dot (8px circle) — leftish inside pill, primary color of active palette
+    // Color dot (8px circle) inside PALETTE — shows active palette's primary color
     lv_obj_t *dot = lv_obj_create(pal_btn);
     lv_obj_remove_style_all(dot);
     lv_obj_set_size(dot, 8, 8);
@@ -443,48 +431,83 @@ static lv_obj_t *build_fullscreen(int mode_idx)
     lv_obj_set_style_text_font(pal_lbl, THEME_FONT_HINT, 0);
     lv_obj_align(pal_lbl, LV_ALIGN_RIGHT_MID, -8, 0);
 
-    // Pass the parent screen pointer as user data so the overlay handler
-    // can attach the overlay to the correct screen object.
     lv_obj_add_event_cb(pal_btn, on_palette_btn, LV_EVENT_CLICKED, scr);
 
-    // 2D swipe navigation in fullscreen
+    // DEMO button (76×40) — left of PALETTE (-8 margin -96 palette -8 gap = -112)
+    lv_obj_t *demo_btn = lv_btn_create(right_zone);
+    lv_obj_remove_style_all(demo_btn);
+    lv_obj_set_size(demo_btn, 76, 40);
+    lv_obj_align(demo_btn, LV_ALIGN_RIGHT_MID, -112, 0);
+    lv_obj_set_style_bg_color(demo_btn, THEME_BG_CARD, 0);
+    lv_obj_set_style_bg_opa(demo_btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(demo_btn, 14, 0);
+    lv_obj_set_style_border_width(demo_btn, 0, 0);
+    lv_obj_add_flag(demo_btn, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(demo_btn, on_demo_btn, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_t *demo_lbl = lv_label_create(demo_btn);
+    lv_obj_remove_style_all(demo_lbl);
+    lv_label_set_text(demo_lbl, "DEMO");
+    lv_obj_set_style_text_color(demo_lbl, THEME_TEXT_HINT, 0);
+    lv_obj_set_style_text_font(demo_lbl, THEME_FONT_HINT, 0);
+    lv_obj_center(demo_lbl);
+    s_demo_btn_lbl = demo_lbl;
+    refresh_demo_btn();
+
+    // 2D swipe navigation — deferred via lv_async_call so the screen transition
+    // runs after the swipe callback returns. Without deferral, auto_del=true in
+    // lv_screen_load_anim deletes the current screen synchronously, freeing
+    // Swipe2DState while the event callback still holds a pointer to it (UAF).
     touch_nav_attach_2d(scr, [](int dir_h, int dir_v, void *) {
-        if (dir_h == -1) { visuals_mode_next(); return; }
-        if (dir_h ==  1) { visuals_mode_prev(); return; }
-        if (dir_v ==  1) { visuals_fullscreen_exit(); return; }
+        if (dir_h == -1) { lv_async_call([](void*){ visuals_mode_next(); }, nullptr); return; }
+        if (dir_h ==  1) { lv_async_call([](void*){ visuals_mode_prev(); }, nullptr); return; }
+        if (dir_v ==  1) { lv_async_call([](void*){ visuals_fullscreen_exit(); }, nullptr); return; }
     }, nullptr);
 
     // Initialise mode renderer
     visuals_mode_init(mode_idx, canvas);
 
-    // Render timer at ~30 Hz
-    s_render_timer = lv_timer_create(visuals_render_tick, 33, canvas);
+    // Render timer at ~30 Hz — FsData binds this timer to its canvas+mode so
+    // on_fs_delete and visuals_render_tick stay correct during mode transitions.
+    FsData *fsd     = new FsData{ nullptr, canvas, mode_idx };
+    s_render_timer  = lv_timer_create(visuals_render_tick, 50, fsd);  // 20Hz
+    fsd->timer      = s_render_timer;
+    lv_obj_set_user_data(scr, fsd);
 
     return scr;
 }
 
 static void on_fs_delete(lv_event_t *e)
 {
-    (void)e;
-    if (s_render_timer) {
-        lv_timer_delete(s_render_timer);
+    lv_obj_t *scr = static_cast<lv_obj_t *>(lv_event_get_current_target(e));
+    FsData   *fsd = static_cast<FsData *>(lv_obj_get_user_data(scr));
+    if (fsd) {
+        if (fsd->timer) lv_timer_delete(fsd->timer);
+        visuals_mode_deinit(fsd->mode_idx, fsd->canvas);
+        delete fsd;
+        lv_obj_set_user_data(scr, nullptr);
+    }
+    // Only clear global pointers if this is still the current screen
+    // (during a mode switch, a new screen has already updated s_fs_scr).
+    if (scr == s_fs_scr) {
+        s_fs_scr       = nullptr;
+        s_canvas       = nullptr;
         s_render_timer = nullptr;
+        s_demo_btn_lbl = nullptr;
+        s_palette_dot  = nullptr;
+        ESP_LOGI(TAG, "fullscreen deleted (mode %d)", s_active_mode);
     }
-    // Deinit active mode renderer
-    if (s_canvas) {
-        visuals_mode_deinit(s_active_mode, s_canvas);
-    }
-    s_fs_scr        = nullptr;
-    s_canvas        = nullptr;
-    s_demo_btn_lbl  = nullptr;
-    s_palette_dot   = nullptr;
-    ESP_LOGI(TAG, "fullscreen deleted (mode %d)", s_active_mode);
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
 void visuals_fullscreen_enter(int mode_idx)
 {
+    // Pause old render timer immediately — prevents it from firing again and
+    // overwriting s_canvas_buf after build_fullscreen initialises it for the new mode.
+    // on_fs_delete will lv_timer_delete it safely once the old screen is freed.
+    if (s_render_timer) lv_timer_pause(s_render_timer);
+
     if (mode_idx < 0 || mode_idx >= MODE_COUNT) mode_idx = 0;
     s_active_mode = mode_idx;
     save_mode(mode_idx);
@@ -492,12 +515,14 @@ void visuals_fullscreen_enter(int mode_idx)
     lv_obj_t *scr = build_fullscreen(mode_idx);
     lv_obj_add_event_cb(scr, on_fs_delete, LV_EVENT_DELETE, nullptr);
     s_fs_scr = scr;
-    lv_screen_load_anim(scr, LV_SCR_LOAD_ANIM_FADE_IN, 200, 0, true);
+    lv_indev_reset(NULL, NULL);
+    lv_screen_load_anim(scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
 }
 
 void visuals_fullscreen_exit()
 {
     lv_obj_t *picker = visuals_screen_create();
+    lv_indev_reset(NULL, NULL);
     lv_screen_load_anim(picker, LV_SCR_LOAD_ANIM_MOVE_BOTTOM, 200, 0, true);
 }
 

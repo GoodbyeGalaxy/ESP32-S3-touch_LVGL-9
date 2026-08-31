@@ -34,9 +34,9 @@ SR        = 44100
 BLOCKSIZE = 1470   # ~33ms at 44100 Hz (≈30 fps)
 FFT_SIZE  = 1024   # power of 2 ≥ BLOCKSIZE; gives 512 positive bins → decimated to BINS
 
-# Packet format: header (48 bytes) + bins (1024 bytes) = 1072 bytes total
-HEADER_FMT = '<BBHIfffffffffI'   # magic,ver,flags,seq, 9×float, fft_bins
-assert struct.calcsize(HEADER_FMT) == 48, "Header size mismatch"
+# Packet format: header (56 bytes) + bins (1024 bytes) = 1080 bytes total
+HEADER_FMT = '<BBHIfffffffffffI'   # magic,ver,flags,seq, 11×float, fft_bins
+assert struct.calcsize(HEADER_FMT) == 56, "Header size mismatch"
 
 # ── Onset detection state ─────────────────────────────────────────────────────
 
@@ -255,23 +255,27 @@ def list_devices():
 
 
 def pack_packet(seq: int, peak_l: float, peak_r: float, rms_l: float, rms_r: float,
+                rms_mono: float, rms_side: float,
                 momentary: float, short_term: float, integrated: float,
                 gonio_l: float, gonio_r: float, bins: np.ndarray,
                 fft_bins: int = BINS) -> bytes:
-    """Packs one AudioPacket (1072 bytes).
+    """Packs one AudioPacket (1080 bytes).
 
     bins must be a float32 array of length fft_bins with values in [0.0, 1.0].
-    Layout: header (48 bytes) + 256 × float32 bins (1024 bytes) = 1072 bytes.
+    Layout: header (56 bytes) + 256 × float32 bins (1024 bytes) = 1080 bytes.
+    rms_mono = RMS of (L+R)/2 — true phase-correct mono sum.
+    rms_side = RMS of (L-R)/2 — true phase-correct side signal.
     """
     header = struct.pack(HEADER_FMT,
         MAGIC, VERSION, 0x03, seq,
         peak_l, peak_r, rms_l, rms_r,
+        rms_mono, rms_side,
         momentary, short_term, integrated,
         gonio_l, gonio_r,
         fft_bins
     )
     payload = bins[:fft_bins].astype(np.float32).tobytes()
-    assert len(header) + len(payload) == 1072, f"Packet size mismatch: {len(header) + len(payload)}"
+    assert len(header) + len(payload) == 1080, f"Packet size mismatch: {len(header) + len(payload)}"
     return header + payload
 
 
@@ -379,6 +383,11 @@ def main():
         rms_l = to_dbfs(rms_l_lin)
         rms_r = to_dbfs(rms_r_lin)
 
+        # True M/S RMS — computed from samples, not from per-channel RMS.
+        # This correctly captures phase relationships: out-of-phase L+R → silent mono.
+        rms_mono = to_dbfs(float(np.mean(mono ** 2)))               # (L+R)/2
+        rms_side = to_dbfs(float(np.mean(((l - r) * 0.5) ** 2)))   # (L-R)/2
+
         power  = float(np.mean(mono ** 2))
         m_acc  += ALPHA_M * (power - m_acc)
         st_acc += ALPHA_S * (power - st_acc)
@@ -406,6 +415,7 @@ def main():
             spectrum /= max_val
 
         pkt = pack_packet(seq, peak_l, peak_r, rms_l, rms_r,
+                          rms_mono, rms_side,
                           momentary, short_term, integrated,
                           gonio_l, gonio_r, spectrum.astype(np.float32),
                           fft_bins=args.bins)

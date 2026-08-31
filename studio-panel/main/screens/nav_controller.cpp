@@ -20,13 +20,12 @@
 #include "nav_controller.h"
 
 #include "esp_timer.h"
-#include "screens/metering.h"
+#include "screens/metering_hub.h"
 #include "screens/visuals.h"
 #include "screens/studio_one.h"
 #include "screens/usb_midi.h"
 #include "screens/routing.h"
-#include "screens/settings.h"
-#include "screens/dev_control.h"
+#include "screens/system.h"
 #include "screens/gradient_test.h"
 #include "screens/home.h"
 
@@ -44,12 +43,12 @@ struct RowDef {
 static constexpr int ROW_COUNT = 3;
 
 static const RowDef ROWS[ROW_COUNT] = {
-    // Row 0: AUDIO  — Spectrum is now a swipe-up sub-view inside Metering
-    { 2, { metering_screen_create, visuals_screen_create, nullptr } },
+    // Row 0: AUDIO  — Metering hub replaces direct metering screen
+    { 2, { metering_hub_screen_create, visuals_screen_create, nullptr } },
     // Row 1: CONTROL
     { 3, { studio_one_screen_create, usb_midi_screen_create, routing_screen_create } },
     // Row 2: SYSTEM
-    { 3, { settings_screen_create, dev_control_screen_create, gradient_test_screen_create } },
+    { 2, { system_screen_create, gradient_test_screen_create, nullptr } },
 };
 
 // ---------------------------------------------------------------------------
@@ -117,11 +116,11 @@ NavPos nav_current()
 
 void nav_go_home()
 {
-    // Remember which row we left, so up/down from Home are coherent.
     if (!is_home()) {
         s_home_row_cursor = s_current.row;
     }
     s_current = { -1, -1 };
+    lv_indev_reset(NULL, NULL);
     home_screen_load();
 }
 
@@ -168,6 +167,7 @@ void nav_go(NavPos pos, bool animate)
     }
 
     s_current = pos;
+    lv_indev_reset(NULL, NULL);
     lv_screen_load_anim(scr, anim, 200, 0, true);
 }
 

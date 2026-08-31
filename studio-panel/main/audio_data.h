@@ -3,7 +3,7 @@
 #include "freertos/queue.h"
 
 // Binary UDP packet received from companion script. All floats little-endian.
-// Total size must equal 1072 bytes — verified by static_assert in audio_data.cpp.
+// Total size must equal 1080 bytes — verified by static_assert in audio_data.cpp.
 struct AudioPacket {
     uint8_t  magic;       // must be 0xAB
     uint8_t  version;     // must be 1
@@ -13,6 +13,8 @@ struct AudioPacket {
     float    peak_r;
     float    rms_l;       // dBFS
     float    rms_r;
+    float    rms_mono;    // dBFS — true mono sum RMS: RMS((L+R)/2), phase-correct
+    float    rms_side;    // dBFS — true side RMS: RMS((L-R)/2), phase-correct
     float    momentary;   // LKFS, 400ms window
     float    short_term;  // LKFS, 3s window
     float    integrated;  // LKFS, cumulative

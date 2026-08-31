@@ -562,7 +562,7 @@ Synth Control
 
 13. Design-Ziel
 
-Nicht nach typischem Hobby-Mikrocontroller-Projekt aussehen.
+Stilvolles, exaktes Touch-Interface für hybride Audio-Umgebungen.
 
 Ziel:
 

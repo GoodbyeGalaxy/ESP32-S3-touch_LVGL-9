@@ -14,6 +14,8 @@
 
 static const char *TAG = "wifi";
 static std::atomic<bool> s_connected{false};
+static std::atomic<int>  s_last_reason{0};
+static std::atomic<bool> s_enabled{true};
 
 // Carries IP string for connected state; heap-allocated, freed after use.
 static void wifi_statusbar_async(void *arg)
@@ -34,9 +36,11 @@ static void wifi_event_handler(void *arg, esp_event_base_t base,
 {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         s_connected = false;
+        auto *dc = static_cast<wifi_event_sta_disconnected_t*>(data);
+        s_last_reason.store(dc ? (int)dc->reason : -1, std::memory_order_relaxed);
+        ESP_LOGW(TAG, "Disconnected reason=%d — reconnecting", dc ? dc->reason : -1);
         lv_async_call(wifi_statusbar_async, nullptr);  // nullptr = disconnected
-        ESP_LOGW(TAG, "Disconnected — reconnecting");
-        esp_wifi_connect();
+        if (s_enabled.load()) esp_wifi_connect();
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         s_connected = true;
         auto *event = static_cast<ip_event_got_ip_t*>(data);
@@ -87,7 +91,7 @@ void wifi_init()
     strncpy((char*)wifi_cfg.sta.ssid,     CONFIG_ESP_WIFI_SSID,     sizeof(wifi_cfg.sta.ssid));
     strncpy((char*)wifi_cfg.sta.password, CONFIG_ESP_WIFI_PASSWORD, sizeof(wifi_cfg.sta.password));
     // Require at least WPA2 — rejects open or WEP networks.
-    wifi_cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    // No explicit auth threshold — ESP-IDF auto-selects based on password and AP capabilities.
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg));
@@ -114,9 +118,35 @@ void wifi_get_ip(char *buf, size_t len)
     }
 }
 
+int wifi_get_disconnect_reason() { return s_last_reason.load(std::memory_order_relaxed); }
+
 void wifi_reconnect()
 {
     if (!s_connected.load()) {
         esp_wifi_connect();
     }
+}
+
+void wifi_toggle()
+{
+    if (s_enabled.load()) {
+        s_enabled = false;
+        s_connected = false;
+        esp_wifi_disconnect();
+        esp_wifi_stop();
+        lv_async_call(wifi_statusbar_async, nullptr);
+    } else {
+        s_enabled = true;
+        esp_wifi_start();
+        esp_wifi_connect();
+    }
+}
+
+bool wifi_is_enabled() { return s_enabled.load(); }
+
+int wifi_get_rssi()
+{
+    wifi_ap_record_t ap{};
+    if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) return (int)ap.rssi;
+    return 0;
 }

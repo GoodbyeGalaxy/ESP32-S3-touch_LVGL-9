@@ -12,9 +12,9 @@
 // ── Layout constants ──────────────────────────────────────────────────────────
 
 static constexpr int STRIP_COUNT   = 8;
-static constexpr int STRIP_PAD_X   = 20;   // left/right margin
-static constexpr int STRIP_W       = 90;   // 8×90 + 2×20 = 760 ≤ 800
-static constexpr int STRIP_GAP     = 5;    // gap between strips (unused — strips are flush)
+static constexpr int STRIP_PAD_X   = 34;   // 2×34 + 8×88 + 7×4 = 800px, symmetric
+static constexpr int STRIP_W       = 88;
+static constexpr int STRIP_GAP     = 4;
 static constexpr int STRIP_TOP_Y   = 60;   // 32px statusbar + 28px breathing room
 static constexpr int STRIP_H       = 340;  // 60+340=400 < 424 (foot at Y=424)
 
@@ -37,25 +37,36 @@ static const FaderDef FADERS[STRIP_COUNT] = {
     {  7, "Volume", 100 },
 };
 
-// ── Module-level bar handles (populated by create_fader, used by on_send_cc) ─
+static constexpr uint8_t MIDI_CH = 0;  // MIDI channel 0 = channel 1
 
-static lv_obj_t *s_bars[STRIP_COUNT] = {};
+// ── Module-level handles (populated by create_fader) ─────────────────────────
 
-// ── MIDI send button callback ─────────────────────────────────────────────────
+static lv_obj_t *s_sliders[STRIP_COUNT] = {};
+static lv_obj_t *s_val_lbls[STRIP_COUNT] = {};
 
-// Called from LVGL task (Core 0) — safe to call usb_midi_send_cc() directly
-// because its FIFO write is thread-safe inside TinyUSB.
+// ── Fader value-changed callback — live CC send ───────────────────────────────
+
+static void on_fader_change(lv_event_t *e)
+{
+    int idx = (int)(uintptr_t)lv_event_get_user_data(e);
+    int32_t val = lv_slider_get_value(lv_event_get_target_obj(e));
+
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%d", (int)val);
+    lv_label_set_text(s_val_lbls[idx], buf);
+
+    usb_midi_send_cc(MIDI_CH, FADERS[idx].cc, (uint8_t)(val & 0x7F));
+}
+
+// ── SEND CC button — resend all current values (snapshot) ────────────────────
+
 static void on_send_cc(lv_event_t *e)
 {
     (void)e;
-    // MIDI channel 0 (= channel 1) for Nord Lead 2X
-    static constexpr uint8_t MIDI_CH = 0;
-
     for (int i = 0; i < STRIP_COUNT; ++i) {
-        if (s_bars[i] == nullptr) continue;
-        const int32_t val = lv_bar_get_value(s_bars[i]);
-        usb_midi_send_cc(MIDI_CH, FADERS[i].cc,
-                         static_cast<uint8_t>(val & 0x7F));
+        if (s_sliders[i] == nullptr) continue;
+        const int32_t val = lv_slider_get_value(s_sliders[i]);
+        usb_midi_send_cc(MIDI_CH, FADERS[i].cc, (uint8_t)(val & 0x7F));
     }
 }
 
@@ -64,7 +75,8 @@ static void on_send_cc(lv_event_t *e)
 // IN: dir_h, dir_v from 2D swipe. OUT: delegates to nav_controller.
 static void on_swipe(int dir_h, int dir_v, void * /*user_data*/)
 {
-    nav_swipe(dir_h, dir_v);
+    // Vertical swipe disabled — would conflict with slider drag.
+    if (dir_h != 0) nav_swipe(dir_h, 0);
 }
 
 // ── Fader strip builder ───────────────────────────────────────────────────────
@@ -85,29 +97,33 @@ static void create_fader(lv_obj_t *parent, const FaderDef &def, int x, int idx)
     lv_obj_clear_flag(strip, LV_OBJ_FLAG_SCROLLABLE);
     theme_apply_glow(strip);
 
-    // Value label at top (shows CC value 0–127)
+    // Value label at top (shows CC value 0–127, updated live by on_fader_change)
     char val_buf[8];
     snprintf(val_buf, sizeof(val_buf), "%d", def.init);
     lv_obj_t *val_lbl = lv_label_create(strip);
     lv_label_set_text(val_lbl, val_buf);
     lv_obj_set_style_text_color(val_lbl, THEME_TEXT_PRIMARY, 0);
-    lv_obj_set_style_text_font(val_lbl, THEME_FONT_HINT, 0);
+    lv_obj_set_style_text_font(val_lbl, &lv_font_montserrat_16, 0);
     lv_obj_align(val_lbl, LV_ALIGN_TOP_MID, 0, 8);
+    s_val_lbls[idx] = val_lbl;
 
-    // Vertical bar (CC value visual)
-    lv_obj_t *bar = lv_bar_create(strip);
-    lv_obj_set_size(bar, BAR_W, BAR_H);
-    lv_obj_set_pos(bar, BAR_OFFSET_X, BAR_OFFSET_Y);
-    lv_bar_set_mode(bar, LV_BAR_MODE_NORMAL);
-    lv_bar_set_range(bar, 0, 127);
-    lv_bar_set_value(bar, def.init, LV_ANIM_OFF);
-    lv_obj_set_style_bg_color(bar, lv_color_hex(0x606060), 0);  // track
-    lv_obj_set_style_bg_color(bar, THEME_ACCENT, LV_PART_INDICATOR);
-    lv_obj_set_style_radius(bar, 3, 0);
-    lv_obj_set_style_radius(bar, 3, LV_PART_INDICATOR);
+    // Vertical slider (height > width → LVGL renders vertically; 0=bottom, 127=top)
+    lv_obj_t *slider = lv_slider_create(strip);
+    lv_obj_set_size(slider, BAR_W, BAR_H);
+    lv_obj_set_pos(slider, BAR_OFFSET_X, BAR_OFFSET_Y);
+    lv_slider_set_range(slider, 0, 127);
+    lv_slider_set_value(slider, def.init, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(slider, lv_color_hex(0x606060), 0);
+    lv_obj_set_style_bg_color(slider, THEME_ACCENT, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(slider, THEME_ACCENT, LV_PART_KNOB);
+    lv_obj_set_style_radius(slider, 3, 0);
+    lv_obj_set_style_radius(slider, 3, LV_PART_INDICATOR);
+    lv_obj_set_style_radius(slider, 3, LV_PART_KNOB);
+    lv_obj_set_style_pad_all(slider, 4, LV_PART_KNOB);
+    lv_obj_add_event_cb(slider, on_fader_change, LV_EVENT_VALUE_CHANGED,
+                        (void *)(uintptr_t)idx);
 
-    // Store handle so on_send_cc() can read the current value
-    s_bars[idx] = bar;
+    s_sliders[idx] = slider;
 
     // CC number label (e.g. "CC 74")
     char cc_buf[8];
@@ -115,14 +131,14 @@ static void create_fader(lv_obj_t *parent, const FaderDef &def, int x, int idx)
     lv_obj_t *cc_lbl = lv_label_create(strip);
     lv_label_set_text(cc_lbl, cc_buf);
     lv_obj_set_style_text_color(cc_lbl, THEME_TEXT_HINT, 0);
-    lv_obj_set_style_text_font(cc_lbl, THEME_FONT_HINT, 0);
+    lv_obj_set_style_text_font(cc_lbl, &lv_font_montserrat_16, 0);
     lv_obj_align(cc_lbl, LV_ALIGN_BOTTOM_MID, 0, -24);
 
     // Parameter name label (e.g. "Cutoff")
     lv_obj_t *name_lbl = lv_label_create(strip);
     lv_label_set_text(name_lbl, def.name);
     lv_obj_set_style_text_color(name_lbl, THEME_TEXT_PRIMARY, 0);
-    lv_obj_set_style_text_font(name_lbl, THEME_FONT_HINT, 0);
+    lv_obj_set_style_text_font(name_lbl, &lv_font_montserrat_16, 0);
     lv_obj_align(name_lbl, LV_ALIGN_BOTTOM_MID, 0, -8);
 }
 
@@ -132,8 +148,7 @@ static void create_fader(lv_obj_t *parent, const FaderDef &def, int x, int idx)
 // Swipe-right navigates home. Lifetime managed by LVGL.
 lv_obj_t *usb_midi_screen_create()
 {
-    // Reset bar handles — screen may be (re)created multiple times
-    for (int i = 0; i < STRIP_COUNT; ++i) s_bars[i] = nullptr;
+    for (int i = 0; i < STRIP_COUNT; ++i) { s_sliders[i] = nullptr; s_val_lbls[i] = nullptr; }
 
     lv_obj_t *scr = theme_make_screen();
 
@@ -150,12 +165,12 @@ lv_obj_t *usb_midi_screen_create()
     lv_obj_t *hint = lv_label_create(scr);
     lv_label_set_text(hint, "Nord Lead 2X");
     lv_obj_set_style_text_color(hint, THEME_TEXT_HINT, 0);
-    lv_obj_set_style_text_font(hint, THEME_FONT_HINT, 0);
-    lv_obj_set_pos(hint, STRIP_PAD_X, 28);
+    lv_obj_set_style_text_font(hint, &lv_font_montserrat_16, 0);
+    lv_obj_set_pos(hint, STRIP_PAD_X, 36);
 
     // 8 CC fader strips — pass index so s_bars[] gets populated
     for (int i = 0; i < STRIP_COUNT; ++i) {
-        const int x = STRIP_PAD_X + i * STRIP_W;
+        const int x = STRIP_PAD_X + i * (STRIP_W + STRIP_GAP);
         create_fader(scr, FADERS[i], x, i);
     }
 
@@ -171,7 +186,7 @@ lv_obj_t *usb_midi_screen_create()
     lv_obj_t *send_lbl = lv_label_create(send_btn);
     lv_label_set_text(send_lbl, "SEND CC");
     lv_obj_set_style_text_color(send_lbl, THEME_TEXT_PRIMARY, 0);
-    lv_obj_set_style_text_font(send_lbl, THEME_FONT_HINT, 0);
+    lv_obj_set_style_text_font(send_lbl, &lv_font_montserrat_16, 0);
     lv_obj_center(send_lbl);
 
     // Wire up click → MIDI CC send

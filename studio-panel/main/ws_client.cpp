@@ -2,7 +2,7 @@
 #include "studio_one_data.h"
 #include "esp_log.h"
 #include "esp_websocket_client.h"
-#include "cjson/cJSON.h"
+#include "cJSON.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <atomic>
@@ -130,7 +130,7 @@ void ws_client_start()
     if (s_running.exchange(true)) return;
     if (!g_studio_one_queue)
         g_studio_one_queue = xQueueCreate(1, sizeof(StudioOneState));
-    xTaskCreatePinnedToCore(ws_task, "ws_client", 4096, nullptr, 4, nullptr, 0);
+    xTaskCreatePinnedToCore(ws_task, "ws_client", 4096, nullptr, 4, nullptr, 1);
 }
 
 bool ws_client_connected() { return s_connected.load(); }

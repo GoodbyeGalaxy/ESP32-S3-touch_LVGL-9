@@ -10,6 +10,7 @@
 #include "screens/statusbar.h"
 #include "screens/foot.h"
 #include "screens/spectrum.h"
+#include "screens/settings_overlay.h"
 #include "lvgl.h"
 #include "driver/gpio.h"
 #include "esp_timer.h"
@@ -34,6 +35,8 @@ struct MeteringScreenData {
     volatile int64_t btn_press_us = 0;
     volatile bool    btn_event    = false;
     volatile bool    btn_long     = false;
+
+    int lufs_ref_sel = 1;  // 0=-23 LUFS, 1=-18 LUFS, 2=-16 LUFS, 3=-14 LUFS
 };
 
 // ── Skin factory ──────────────────────────────────────────────────────────────
@@ -148,10 +151,18 @@ lv_obj_t *metering_screen_create()
     {
         lv_obj_t *right = foot_create(scr);
 
-        // VU / DIGITAL Toggle-Button im right_zone
+        // Settings gear (rightmost)
+        static const SettingOption lufs_opts[] = {
+            {"-23 LUFS"}, {"-18 LUFS"}, {"-16 LUFS"}, {"-14 LUFS"}
+        };
+        auto *levels_items = new SettingItem[1];
+        levels_items[0] = { "LUFS Reference", lufs_opts, 4, &d->lufs_ref_sel };
+        settings_btn_create(right, scr, levels_items, 1);
+
+        // VU / DIGITAL Toggle-Button — moved left of gear button
         lv_obj_t *sbtn = lv_btn_create(right);
         lv_obj_set_size(sbtn, 90, 40);
-        lv_obj_align(sbtn, LV_ALIGN_RIGHT_MID, -8, 0);
+        lv_obj_align(sbtn, LV_ALIGN_RIGHT_MID, -60, 0);
         lv_obj_set_style_bg_color(sbtn, THEME_BG_CARD, 0);
         lv_obj_set_style_bg_color(sbtn, THEME_BG_CARD_HOVER, LV_STATE_PRESSED);
         lv_obj_add_event_cb(sbtn, [](lv_event_t *e) {

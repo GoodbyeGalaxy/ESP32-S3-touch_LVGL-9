@@ -14,7 +14,7 @@ struct TileDef {
 };
 
 static const TileDef TILES[6] = {
-    { LV_SYMBOL_AUDIO,    "METERING",    "Pegel / RMS / LUFS", {0, 0} },
+    { LV_SYMBOL_AUDIO,    "METERING",    "Levels / Osc / Phase / M-S", {0, 0} },
     { LV_SYMBOL_PLAY,     "STUDIO ONE",  "DAW Control",        {1, 0} },
     { LV_SYMBOL_SHUFFLE,  "USB MIDI",    "CC / Nord Lead 2X",  {1, 1} },
     { LV_SYMBOL_IMAGE,    "VISUALS",     "Visual Modes",       {0, 1} },
@@ -35,13 +35,13 @@ lv_obj_t *home_screen_create()
     statusbar_set_screen_name("HOME");
 
     // Tile layout for Content area (Y=32..424, H=392):
-    // 3 cols × 256px + 2 gaps × 16px + 2 margins × 16px = 768+32 = 800 ✓
+    // 3 cols × 256px + 2 gaps × 12px + 2 margins × 4px = 800 ✓  (symmetric left/right)
     // 2 rows × 178px + 3 gaps × 12px = 356+36 = 392 ✓
     constexpr int TILE_W      = 256;
     constexpr int TILE_H      = 178;
-    constexpr int GAP_H       = 16;   // horizontal gap between tiles
+    constexpr int GAP_H       = 12;   // horizontal gap between tiles — matches GAP_V
     constexpr int GAP_V       = 12;   // vertical gap (also used as top/bottom margin)
-    constexpr int LEFT_MARGIN = 10;   // left margin
+    constexpr int LEFT_MARGIN = (800 - 3 * TILE_W - 2 * GAP_H) / 2;  // = 4px, right margin = 4px
 
     for (int i = 0; i < 6; i++) {
         int col = i % 3;

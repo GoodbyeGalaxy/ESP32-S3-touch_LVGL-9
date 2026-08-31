@@ -56,36 +56,77 @@ static lv_color_t hsv_to_color(float h, float s, float v)
         (uint8_t)(b * 255.0f));
 }
 
-// IN: canvas, x, y, color. OUT: nothing. Bounds-checked pixel write.
+// IN: canvas, x, y, color. OUT: nothing. Direct PSRAM write — no LVGL draw task.
 static inline void put_px(lv_obj_t *canvas, int x, int y, lv_color_t col)
 {
-    if ((unsigned)x < CW && (unsigned)y < CH) {
-        lv_canvas_set_px(canvas, x, y, col, LV_OPA_COVER);
+    if ((unsigned)x >= CW || (unsigned)y >= CH) return;
+    lv_draw_buf_t *db = lv_canvas_get_draw_buf(canvas);
+    if (!db || !db->data) return;
+    lv_color32_t *p = reinterpret_cast<lv_color32_t *>(db->data) + y * CW + x;
+    p->red = col.red; p->green = col.green; p->blue = col.blue; p->alpha = 0xFF;
+}
+
+// Bresenham line — no DRAM draw-task allocation.
+static void draw_line_px(lv_obj_t *canvas, int x0, int y0, int x1, int y1, lv_color_t col)
+{
+    int dx = abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
+    int dy = -abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+    int err = dx + dy;
+    while (true) {
+        put_px(canvas, x0, y0, col);
+        if (x0 == x1 && y0 == y1) break;
+        int e2 = 2 * err;
+        if (e2 >= dy) { err += dy; x0 += sx; }
+        if (e2 <= dx) { err += dx; y0 += sy; }
     }
 }
 
-// IN: canvas, fade opacity 0..255. OUT: dark overlay drawn over entire canvas.
-// Used for trail effects — semi-transparent black dims previous content.
+// IN: canvas, fade opacity 0..255. OUT: palette bg_tint blended into Lissajous region.
+// Direct PSRAM buffer write — zero LVGL draw-task allocations (no DRAM risk).
 static void fade_canvas(lv_obj_t *canvas, lv_opa_t opa)
 {
-    lv_layer_t layer;
-    lv_canvas_init_layer(canvas, &layer);
+    lv_draw_buf_t *db = lv_canvas_get_draw_buf(canvas);
+    if (!db || !db->data) return;
 
-    lv_draw_rect_dsc_t dsc;
-    lv_draw_rect_dsc_init(&dsc);
-    dsc.bg_color   = visuals_get_palette()->bg_tint;
-    dsc.bg_opa     = opa;
-    dsc.radius     = 0;
-    lv_area_t area = { 0, 0, CW - 1, CH - 1 };
-    lv_draw_rect(&layer, &dsc, &area);
+    lv_color32_t *buf = reinterpret_cast<lv_color32_t *>(db->data);
+    const VisualPalette *pal = visuals_get_palette();
+    uint32_t inv = 255u - (uint32_t)opa;
+    uint32_t bgr = (uint32_t)pal->bg_tint.red   * opa;
+    uint32_t bgg = (uint32_t)pal->bg_tint.green * opa;
+    uint32_t bgb = (uint32_t)pal->bg_tint.blue  * opa;
 
-    lv_canvas_finish_layer(canvas, &layer);
+    // Clamp to Lissajous draw region: SCALE=200 → ±205px from canvas centre
+    int x0 = CX - 205, y0 = CY - 205, x1 = CX + 205, y1 = CY + 205;
+    if (x0 < 0)   x0 = 0;
+    if (y0 < 0)   y0 = 0;
+    if (x1 >= CW) x1 = CW - 1;
+    if (y1 >= CH) y1 = CH - 1;
+
+    for (int y = y0; y <= y1; y++) {
+        lv_color32_t *row = buf + y * CW;
+        for (int x = x0; x <= x1; x++) {
+            row[x].red   = (uint8_t)((row[x].red   * inv + bgr) >> 8);
+            row[x].green = (uint8_t)((row[x].green * inv + bgg) >> 8);
+            row[x].blue  = (uint8_t)((row[x].blue  * inv + bgb) >> 8);
+        }
+    }
+    lv_obj_invalidate(canvas);
 }
 
-// IN: canvas. OUT: fills with active palette bg_tint (very dark, safe for IPS panel).
+// IN: canvas. OUT: fills with active palette bg_tint. Direct PSRAM fill — no draw task.
 static void clear_canvas(lv_obj_t *canvas)
 {
-    lv_canvas_fill_bg(canvas, visuals_get_palette()->bg_tint, LV_OPA_COVER);
+    lv_draw_buf_t *db = lv_canvas_get_draw_buf(canvas);
+    if (!db || !db->data) return;
+    lv_color32_t *buf  = reinterpret_cast<lv_color32_t *>(db->data);
+    lv_color_t    bg_c = visuals_get_palette()->bg_tint;
+    lv_color32_t  fill;
+    fill.red   = bg_c.red;
+    fill.green = bg_c.green;
+    fill.blue  = bg_c.blue;
+    fill.alpha = 0xFF;
+    for (int i = 0; i < CW * CH; i++) buf[i] = fill;
+    lv_obj_invalidate(canvas);
 }
 
 // ── Latest AudioPacket snapshot ───────────────────────────────────────────────
@@ -183,15 +224,30 @@ static void mode0_tick(lv_obj_t *canvas, uint32_t t_ms)
     // Dim by inverse brightness (bright=1 → full, bright=0 → dim)
     col = lv_color_mix(col, pal->bg_tint, (uint8_t)(bright * 255.0f));
 
-    // Draw a small glow cluster around the point
-    for (int r = 2; r >= 0; r--) {
-        lv_opa_t opa = (r == 0) ? LV_OPA_COVER : (r == 1 ? LV_OPA_50 : LV_OPA_20);
-        for (int dy2 = -r; dy2 <= r; dy2++) {
-            for (int dx2 = -r; dx2 <= r; dx2++) {
-                if (r > 0 && abs(dx2) != r && abs(dy2) != r) continue; // outline only
-                int xx = px + dx2, yy = py + dy2;
-                if ((unsigned)xx < CW && (unsigned)yy < CH) {
-                    lv_canvas_set_px(canvas, xx, yy, col, opa);
+    // Draw a small glow cluster — direct PSRAM write with alpha blend, zero draw tasks.
+    {
+        lv_draw_buf_t *db0 = lv_canvas_get_draw_buf(canvas);
+        lv_color32_t  *b0  = (db0 && db0->data)
+                            ? reinterpret_cast<lv_color32_t *>(db0->data) : nullptr;
+        if (b0) {
+            for (int r = 2; r >= 0; r--) {
+                uint8_t opa = (r == 0) ? 255u : (r == 1 ? 128u : 51u);
+                for (int dy2 = -r; dy2 <= r; dy2++) {
+                    for (int dx2 = -r; dx2 <= r; dx2++) {
+                        if (r > 0 && abs(dx2) != r && abs(dy2) != r) continue;
+                        int xx = px + dx2, yy = py + dy2;
+                        if ((unsigned)xx >= CW || (unsigned)yy >= CH) continue;
+                        lv_color32_t *p = b0 + yy * CW + xx;
+                        if (opa == 255u) {
+                            p->red = col.red; p->green = col.green;
+                            p->blue = col.blue; p->alpha = 0xFF;
+                        } else {
+                            uint32_t inv = 255u - opa;
+                            p->red   = (uint8_t)((p->red   * inv + (uint32_t)col.red   * opa) >> 8);
+                            p->green = (uint8_t)((p->green * inv + (uint32_t)col.green * opa) >> 8);
+                            p->blue  = (uint8_t)((p->blue  * inv + (uint32_t)col.blue  * opa) >> 8);
+                        }
+                    }
                 }
             }
         }
@@ -234,50 +290,32 @@ static void mode1_tick(lv_obj_t *canvas, uint32_t)
     snap_packet();
     clear_canvas(canvas);
 
-    lv_layer_t layer;
-    lv_canvas_init_layer(canvas, &layer);
-
-    constexpr float BASE_R   = 80.0f;
-    constexpr float SCALE_R  = 120.0f;
-    constexpr float BPM_DEF  = 120.0f;
-    // Rotation speed: BPM/240 radians per tick at 30Hz → 120 BPM = 0.5 rad/s
+    constexpr float BASE_R  = 80.0f;
+    constexpr float SCALE_R = 120.0f;
+    constexpr float BPM_DEF = 120.0f;
     float rot_step = (BPM_DEF / 240.0f) * (1.0f / 30.0f) * (float)s_circ.rotation_dir;
     s_circ.angle_offset += rot_step;
 
-    // EMA smoothing on bins
     for (int i = 0; i < 256; i++) {
         s_circ.last_bins[i] += 0.3f * (s_pkt.bins[i] - s_circ.last_bins[i]);
     }
 
-    // Color: lerp from palette secondary (inner ring) to primary (peaks),
-    // accent marks the highest energy bins.
     const VisualPalette *pal1 = visuals_get_palette();
 
     for (int i = 0; i < 256; i++) {
-        float angle = s_circ.angle_offset + (float)i / 256.0f * TWO_PI;
-        float r_end = BASE_R + s_circ.last_bins[i] * SCALE_R;
-
-        // Bins with high energy → accent, others lerp primary↔secondary by mood
+        float angle   = s_circ.angle_offset + (float)i / 256.0f * TWO_PI;
+        float r_end   = BASE_R + s_circ.last_bins[i] * SCALE_R;
         float energy_t = fminf(1.0f, s_circ.last_bins[i] * 3.0f);
         lv_color_t base_col = lv_color_mix(pal1->primary, pal1->secondary,
                                            (uint8_t)((1.0f - g_visuals_mood) * 255.0f));
         lv_color_t col = lv_color_mix(pal1->accent, base_col,
                                       (uint8_t)(energy_t * 255.0f));
-
         float cos_a = cosf(angle), sin_a = sinf(angle);
-
-        lv_draw_line_dsc_t dsc;
-        lv_draw_line_dsc_init(&dsc);
-        dsc.color = col;
-        dsc.width = 1;
-        dsc.p1.x  = (lv_value_precise_t)(CX + cos_a * BASE_R);
-        dsc.p1.y  = (lv_value_precise_t)(CY + sin_a * BASE_R);
-        dsc.p2.x  = (lv_value_precise_t)(CX + cos_a * r_end);
-        dsc.p2.y  = (lv_value_precise_t)(CY + sin_a * r_end);
-        lv_draw_line(&layer, &dsc);
+        draw_line_px(canvas,
+                     (int)(CX + cos_a * BASE_R), (int)(CY + sin_a * BASE_R),
+                     (int)(CX + cos_a * r_end),  (int)(CY + sin_a * r_end),
+                     col);
     }
-
-    lv_canvas_finish_layer(canvas, &layer);
 }
 
 static void mode1_touch(lv_obj_t *, int, int)
@@ -335,59 +373,41 @@ static void mode2_tick(lv_obj_t *canvas, uint32_t)
     float treble_e = band_energy(s_pkt.bins, 180, 255);
     float energies[3] = { bass_e, mid_e, treble_e };
 
-    // Amplitudes
     float amps[3]   = { 80.0f, 40.0f, 20.0f };
-    // Frequency of spatial wave (cycles per 800px)
     float freqs[3]  = { 0.004f, 0.007f, 0.012f };
-    // Thickness
     int   widths[3] = { 4, 2, 1 };
 
-    // Layer colours from active palette:
-    // bass (0) → secondary, mid (1) → primary, treble (2) → accent
     const VisualPalette *pal2 = visuals_get_palette();
     const lv_color_t layer_cols[3] = { pal2->secondary, pal2->primary, pal2->accent };
 
-    lv_layer_t layer;
-    lv_canvas_init_layer(canvas, &layer);
-
     for (int li = 0; li < 3; li++) {
-        AuroraLayer &l  = s_aurora.layers[li];
-        float e         = energies[li];
-        l.phase        += l.speed * (1.0f + e * 2.0f);
+        AuroraLayer &l = s_aurora.layers[li];
+        float e        = energies[li];
+        l.phase       += l.speed * (1.0f + e * 2.0f);
 
-        float amp = amps[li] * (0.3f + e * 0.7f);
-        // Brighten/dim by energy; mood modulates mix toward secondary
-        lv_color_t bright_col = lv_color_mix(layer_cols[li], pal2->secondary,
-                                             (uint8_t)((1.0f - e) * 128.0f));
-        lv_color_t col = bright_col;
-
-        lv_draw_line_dsc_t dsc;
-        lv_draw_line_dsc_init(&dsc);
-        dsc.color = col;
-        dsc.width = (int32_t)widths[li];
+        float      amp = amps[li] * (0.3f + e * 0.7f);
+        lv_color_t col = lv_color_mix(layer_cols[li], pal2->secondary,
+                                      (uint8_t)((1.0f - e) * 128.0f));
 
         for (int x = 0; x < CW - 1; x++) {
             float ripple = 0.0f;
             if (s_aurora.has_ripple && li == 0) {
                 float rx = (float)(x - s_aurora.ripple_x);
-                s_aurora.ripple_phase += 0.0f;  // updated once per tick below
                 ripple = 15.0f * sinf(rx * 0.05f + s_aurora.ripple_phase)
                        * expf(-fabsf(rx) * 0.008f);
             }
-            float y0 = l.center_y + amp * sinf((float)x * freqs[li] + l.phase) + ripple;
-            float y1 = l.center_y + amp * sinf((float)(x + 1) * freqs[li] + l.phase) + ripple;
+            float y0f = l.center_y + amp * sinf((float)x       * freqs[li] + l.phase) + ripple;
+            float y1f = l.center_y + amp * sinf((float)(x + 1) * freqs[li] + l.phase) + ripple;
 
-            dsc.p1 = { (lv_value_precise_t)x,       (lv_value_precise_t)y0 };
-            dsc.p2 = { (lv_value_precise_t)(x + 1), (lv_value_precise_t)y1 };
-            lv_draw_line(&layer, &dsc);
+            for (int w = 0; w < widths[li]; w++) {
+                draw_line_px(canvas, x, (int)y0f + w, x + 1, (int)y1f + w, col);
+            }
         }
     }
 
     if (s_aurora.has_ripple) {
         s_aurora.ripple_phase += 0.12f;
     }
-
-    lv_canvas_finish_layer(canvas, &layer);
 }
 
 static void mode2_touch(lv_obj_t *, int x, int)
@@ -420,27 +440,20 @@ struct BassPulse3State {
 
 static BassPulse3State s_bass;
 
-// IN: cx, cy, radius, sides (6=hex,∞=circle,4=diamond,3=tri), color, width.
-static void draw_poly_outline(lv_layer_t *layer, float cx, float cy,
-                              float radius, int sides,
-                              lv_color_t col, int width)
+// IN: canvas, cx, cy, radius, sides (6=hex,∞=circle,4=diamond,3=tri), color.
+static void draw_poly_outline(lv_obj_t *canvas, float cx, float cy,
+                              float radius, int sides, lv_color_t col, int /*width*/)
 {
-    lv_draw_line_dsc_t dsc;
-    lv_draw_line_dsc_init(&dsc);
-    dsc.color = col;
-    dsc.width = (int32_t)width;
-
-    float angle_step = TWO_PI / (float)sides;
-    float start_angle = (sides == 4) ? TWO_PI / 8.0f : 0.0f;  // rotate diamond 45°
+    float angle_step  = TWO_PI / (float)sides;
+    float start_angle = (sides == 4) ? TWO_PI / 8.0f : 0.0f;
 
     for (int i = 0; i < sides; i++) {
         float a0 = start_angle + (float)i       * angle_step;
         float a1 = start_angle + (float)(i + 1) * angle_step;
-        dsc.p1 = { (lv_value_precise_t)(cx + cosf(a0) * radius),
-                   (lv_value_precise_t)(cy + sinf(a0) * radius) };
-        dsc.p2 = { (lv_value_precise_t)(cx + cosf(a1) * radius),
-                   (lv_value_precise_t)(cy + sinf(a1) * radius) };
-        lv_draw_line(layer, &dsc);
+        draw_line_px(canvas,
+                     (int)(cx + cosf(a0) * radius), (int)(cy + sinf(a0) * radius),
+                     (int)(cx + cosf(a1) * radius), (int)(cy + sinf(a1) * radius),
+                     col);
     }
 }
 
@@ -469,9 +482,7 @@ static void mode3_tick(lv_obj_t *canvas, uint32_t)
 
     float bass_e = band_energy(s_pkt.bins, 0, 20);
 
-    // Transient detection
     if (bass_e > s_bass.last_bass * 1.4f && bass_e > 0.08f) {
-        // Find an inactive ring slot
         for (auto &r : s_bass.rings) {
             if (!r.active) {
                 r.active  = true;
@@ -483,40 +494,23 @@ static void mode3_tick(lv_obj_t *canvas, uint32_t)
     }
     s_bass.last_bass = bass_e;
 
-    // Color: mood lerps between palette primary (low mood) and accent (high mood)
     const VisualPalette *pal3 = visuals_get_palette();
     lv_color_t ring_col = lv_color_mix(pal3->accent, pal3->primary,
                                        (uint8_t)((1.0f - g_visuals_mood) * 255.0f));
 
-    lv_layer_t layer;
-    lv_canvas_init_layer(canvas, &layer);
+    draw_poly_outline(canvas, CX, CY, 60.0f + bass_e * 40.0f,
+                      shape_sides(s_bass.shape), ring_col, 2);
 
-    // Centre geometric shape — breathes with bass energy
-    {
-        float base_r = 60.0f + bass_e * 40.0f;
-        int sides    = shape_sides(s_bass.shape);
-        draw_poly_outline(&layer, CX, CY, base_r, sides, ring_col, 2);
-    }
-
-    // Expanding rings
     for (auto &r : s_bass.rings) {
         if (!r.active) continue;
-
         r.radius  += 8.0f;
         r.opacity -= 12.0f;
         if (r.opacity <= 0.0f) { r.active = false; continue; }
-
-        lv_opa_t opa = (lv_opa_t)r.opacity;
-        int sides    = shape_sides(s_bass.shape);
-        // 3px wide ring = 3 concentric outlines at r, r+1, r+2
+        int sides = shape_sides(s_bass.shape);
         for (int d = 0; d < 3; d++) {
-            lv_color_t rc = ring_col;
-            draw_poly_outline(&layer, CX, CY, r.radius + d, sides, rc, 1);
-            (void)opa;  // opacity via alpha blend not available in draw_line; use dim colour instead
+            draw_poly_outline(canvas, CX, CY, r.radius + (float)d, sides, ring_col, 1);
         }
     }
-
-    lv_canvas_finish_layer(canvas, &layer);
 }
 
 static void mode3_touch(lv_obj_t *, int, int)
@@ -528,27 +522,28 @@ static void mode3_touch(lv_obj_t *, int, int)
 
 static void mode3_deinit(lv_obj_t *) { s_bass = {}; }
 
-// ── MODE 4: Terrain Wave ──────────────────────────────────────────────────────
-// Scrolling heightmap from FFT bins, 3 depth layers.
+// ── MODE 4: Joy Division (Unknown Pleasures) ──────────────────────────────────
+// Time-scrolling FFT ridgelines on black. Newest row at bottom, oldest at top.
+// Each row's black occlusion fill creates parallax depth — identical to the
+// "Unknown Pleasures" album cover effect.
 
 struct Terrain4State {
-    // Circular buffer of columns: terrain[col_idx][x_within_800]
-    // Storing last 800 column heights, updated per tick
-    float  heights[CW];        // current column to display
-    int    bin_offset = 0;     // touch-controlled frequency offset ±128
-    float  scroll_acc = 0.0f;  // sub-pixel scroll accumulator
+    static constexpr int ROWS = 10;
+    float  history[ROWS][CW];  // ring buffer of FFT snapshots (32 KB DRAM)
+    int    head       = 0;     // next row to overwrite
+    int    bin_offset = 0;     // touch-controlled frequency offset
+    int    tick_skip  = 0;     // throttle scroll rate
 };
 
 static Terrain4State *s_terrain = nullptr;
 
 static void mode4_init(lv_obj_t *canvas)
 {
-    if (!s_terrain) {
-        s_terrain = new Terrain4State{};
-    }
-    memset(s_terrain->heights, 0, sizeof(s_terrain->heights));
+    if (!s_terrain) s_terrain = new Terrain4State{};
+    memset(s_terrain->history, 0, sizeof(s_terrain->history));
+    s_terrain->head       = 0;
     s_terrain->bin_offset = 0;
-    s_terrain->scroll_acc = 0.0f;
+    s_terrain->tick_skip  = 0;
     clear_canvas(canvas);
 }
 
@@ -557,77 +552,67 @@ static void mode4_tick(lv_obj_t *canvas, uint32_t)
     snap_packet();
     if (!s_terrain) return;
 
-    constexpr float BPM_DEFAULT  = 120.0f;
-    float           scroll_speed = BPM_DEFAULT / 120.0f;  // px per tick
+    lv_draw_buf_t *db4 = lv_canvas_get_draw_buf(canvas);
+    if (!db4 || !db4->data) return;
+    lv_color32_t *buf = reinterpret_cast<lv_color32_t *>(db4->data);
 
-    s_terrain->scroll_acc += scroll_speed;
-    int scroll_px = (int)s_terrain->scroll_acc;
-    s_terrain->scroll_acc -= (float)scroll_px;
-    if (scroll_px < 1) scroll_px = 1;
-
-    // Build new column(s) from current FFT
-    // Map screen X → FFT bin with optional offset
-    for (int x = 0; x < CW; x++) {
-        int bin_idx = x * 256 / CW + s_terrain->bin_offset;
-        bin_idx = std::max(0, std::min(255, bin_idx));
-        s_terrain->heights[x] = s_pkt.bins[bin_idx] * 160.0f;  // 0..160px
+    // Scroll: push one new FFT snapshot into history every 4 ticks (~5 Hz)
+    if (++s_terrain->tick_skip >= 4) {
+        s_terrain->tick_skip = 0;
+        float *row = s_terrain->history[s_terrain->head];
+        for (int x = 0; x < CW; x++) {
+            int bin = x * 220 / CW + s_terrain->bin_offset;
+            bin = std::max(0, std::min(255, bin));
+            row[x] = s_pkt.bins[bin];
+        }
+        s_terrain->head = (s_terrain->head + 1) % Terrain4State::ROWS;
     }
 
-    clear_canvas(canvas);
+    // Black background (row-major sequential write — fast PSRAM burst)
+    lv_color32_t black = {0x06, 0x06, 0x08, 0xFF};
+    for (int i = 0; i < CW * CH; i++) buf[i] = black;
 
-    lv_layer_t layer;
-    lv_canvas_init_layer(canvas, &layer);
+    // Layout
+    static constexpr int ROWS = Terrain4State::ROWS;
+    const int ct      = THEME_CONTENT_Y + 8;
+    const int cb      = CH - THEME_FOOT_H - 8;
+    const int row_h   = (cb - ct) / ROWS;         // ≈40 px per row
+    const int ridge_h = (int)(row_h * 0.90f);     // max ridge amplitude
 
-    // Draw 3 depth layers (back to front) using palette colors
-    // Layer 2 (back): secondary dimmed, heights*0.35, y_offset=-80
-    // Layer 1 (mid): lerp secondary↔primary, heights*0.6, y_offset=-40
-    // Layer 0 (front): primary/accent, heights*1.0, y_offset=0
-    const VisualPalette *pal4 = visuals_get_palette();
+    const VisualPalette *pal = visuals_get_palette();
 
-    struct LayerSpec { float h_scale; float bright; int y_off; };
-    static const LayerSpec layers[3] = {
-        { 0.35f, 0.30f, -80 },  // back
-        { 0.60f, 0.60f, -40 },  // mid
-        { 1.00f, 1.00f,   0 },  // front
-    };
+    // Draw oldest→newest so newer rows occlude older ones (Joy Division depth effect)
+    for (int ri = 0; ri < ROWS; ri++) {
+        int   row_idx = (s_terrain->head + ri) % ROWS;  // ri=0 oldest, ri=ROWS-1 newest
+        float *heights = s_terrain->history[row_idx];
+        float  age     = (float)ri / (float)(ROWS - 1);  // 0=oldest, 1=newest
+        int    base_y  = ct + (ri + 1) * row_h;
 
-    // Per-layer colors derived from palette
-    lv_color_t layer_colors[3] = {
-        lv_color_mix(pal4->secondary, lv_color_hex(0x000000u), 80),   // back: very dim secondary
-        lv_color_mix(pal4->primary,   pal4->secondary,          128),  // mid: blend
-        lv_color_mix(pal4->accent,    pal4->primary,
-                     (uint8_t)(g_visuals_mood * 255.0f)),              // front: accent↔primary by mood
-    };
-
-    int base_y = CH - THEME_FOOT_H - 10;  // bottom of terrain area
-
-    for (int li = 2; li >= 0; li--) {
-        const LayerSpec &L = layers[li];
-        // Apply brightness scaling to the layer color
-        lv_color_t col = lv_color_mix(layer_colors[li], lv_color_hex(0x000000u),
-                                      (uint8_t)(L.bright * 255.0f));
+        // Ridge colour: dim accent for old rows, bright accent for new rows
+        uint8_t br = (uint8_t)(35 + (uint32_t)(age * 220));
+        lv_color_t ac = pal->accent;
+        lv_color32_t ridge = {
+            .blue  = (uint8_t)((uint32_t)ac.blue  * br / 255),
+            .green = (uint8_t)((uint32_t)ac.green * br / 255),
+            .red   = (uint8_t)((uint32_t)ac.red   * br / 255),
+            .alpha = 0xFF
+        };
 
         for (int x = 0; x < CW; x++) {
-            float h = s_terrain->heights[x] * L.h_scale;
-            int   y_top = base_y + L.y_off - (int)h;
-            int   y_bot = base_y + L.y_off;
-            if (y_top > y_bot) y_top = y_bot;
+            int y_peak = base_y - (int)(heights[x] * ridge_h);
+            if (y_peak < ct) y_peak = ct;
 
-            lv_area_t col_area = {
-                (lv_coord_t)x,
-                (lv_coord_t)y_top,
-                (lv_coord_t)x,
-                (lv_coord_t)y_bot
-            };
-            lv_draw_rect_dsc_t dsc;
-            lv_draw_rect_dsc_init(&dsc);
-            dsc.bg_color = col;
-            dsc.radius   = 0;
-            lv_draw_rect(&layer, &dsc, &col_area);
+            // Ridge line — 2 px for readability
+            if (y_peak     < CH) buf[y_peak     * CW + x] = ridge;
+            if (y_peak + 1 < CH) buf[(y_peak+1) * CW + x] = ridge;
+
+            // Occlusion fill: black from ridge downward hides older rows behind
+            for (int y = y_peak + 2; y <= base_y && y < CH; y++)
+                buf[y * CW + x] = black;
         }
     }
 
-    lv_canvas_finish_layer(canvas, &layer);
+    lv_obj_invalidate(canvas);
 }
 
 static void mode4_touch(lv_obj_t *, int x, int)
@@ -659,12 +644,25 @@ static void mode_stub_deinit(lv_obj_t *) {}
 // c parameter from audio:      c_real ← bass_energy, c_imag ← treble_energy
 // Mandelbrot: standard c=pixel, z starts at (0,0). toggled by 1.5s touch hold.
 
-static constexpr int   JULIA_W       = 200;
-static constexpr int   JULIA_H       = 120;
-static constexpr int   JULIA_MAX_ITER = 64;
-static constexpr int   JULIA_SCALE   = 4;    // upscale factor → 800×480
+static constexpr int   JULIA_W       = 400;
+static constexpr int   JULIA_H       = 240;
+static constexpr int   JULIA_MAX_ITER = 128;
+static constexpr int   JULIA_SCALE   = 2;    // upscale factor → 800×480
 static constexpr float JULIA_RE_SPAN = 3.5f; // real axis full span
 static constexpr float JULIA_IM_SPAN = 2.0f; // imaginary axis full span
+
+// Beautiful Julia-set c-parameter waypoints (near Mandelbrot boundary)
+static constexpr float JULIA_TRAJ[][2] = {
+    {-0.4f,      0.6f  },   // Douady spiral
+    {-0.7269f,   0.1889f},  // dendritic / Siegel disk
+    {-0.8f,      0.156f},   // Douady rabbit
+    {-0.12f,     0.74f },   // thin dendrite
+    {-0.70176f, -0.3842f},  // spiral (neg imag)
+    { 0.285f,    0.01f },   // connected intricate
+    {-0.4f,     -0.6f },    // spiral (mirrored)
+    {-0.7269f,  -0.1889f},  // dendritic (mirrored)
+};
+static constexpr int JULIA_TRAJ_COUNT = 8;
 
 // ── Julia state ───────────────────────────────────────────────────────────────
 
@@ -687,6 +685,9 @@ static std::atomic<bool>  s_julia_running{false};
 
 // Palette animation state (LVGL task only)
 static float s_phase_offset   = 0.0f;
+
+// Trajectory position through JULIA_TRAJ waypoints (Julia only, LVGL task only)
+static float s_traj_pos       = 0.0f;
 
 // Zoom state (LVGL task only)
 static float s_zoom           = 1.0f;
@@ -800,18 +801,19 @@ static void mode7_init(lv_obj_t *canvas)
 
     // Reset state
     s_phase_offset      = 0.0f;
-    s_zoom              = 1.0f;
-    s_zoom_cx           = 0.0f;
-    s_zoom_cy           = 0.0f;
+    s_traj_pos          = 0.0f;  // starts at waypoint 0: c=(-0.4, 0.6)
+    s_zoom              = 5.0f;
+    s_zoom_cx           = 0.5f;
+    s_zoom_cy           = 0.1f;
     s_loudness_integral = 0.0f;
     s_touch_down_ms     = 0;
     s_touch_held        = false;
     s_mandel_tick_count = 0;
     s_mandel_center_idx = 0;
 
-    s_zoom_atomic.store(1.0f,  std::memory_order_relaxed);
-    s_zoom_cx_atomic.store(0.0f, std::memory_order_relaxed);
-    s_zoom_cy_atomic.store(0.0f, std::memory_order_relaxed);
+    s_zoom_atomic.store(5.0f,  std::memory_order_relaxed);
+    s_zoom_cx_atomic.store(0.5f, std::memory_order_relaxed);
+    s_zoom_cy_atomic.store(0.1f, std::memory_order_relaxed);
     s_c_real.store(-0.4f, std::memory_order_relaxed);
     s_c_imag.store( 0.6f, std::memory_order_relaxed);
     s_mandelbrot_mode.store(false, std::memory_order_relaxed);
@@ -822,20 +824,20 @@ static void mode7_init(lv_obj_t *canvas)
     // Launch render task (Core 0, priority 2, 3072 byte stack)
     s_julia_running.store(true, std::memory_order_relaxed);
     xTaskCreatePinnedToCore(julia_render_task, "julia_render",
-                            3072, nullptr, 2, &s_julia_task, 0);
+                            3072, nullptr, 2, &s_julia_task, 1);  // core 1: no LVGL competition
 }
 
 static void mode7_deinit(lv_obj_t *)
 {
-    // Signal task to stop, then wait for it to exit
     s_julia_running.store(false, std::memory_order_relaxed);
 
-    // Give the semaphore in case the task is blocking on it
-    if (s_frame_ready) xSemaphoreGive(s_frame_ready);
-
-    // Give task time to exit gracefully (it calls vTaskDelete on itself)
-    vTaskDelay(pdMS_TO_TICKS(60));
-    s_julia_task = nullptr;
+    // Force-delete the render task — it holds no mutexes, only our PSRAM buffers
+    // which we free below. vTaskDelete on another task is non-blocking and safe
+    // from LVGL task context. Avoids the 60ms vTaskDelay that froze the UI.
+    if (s_julia_task) {
+        vTaskDelete(s_julia_task);
+        s_julia_task = nullptr;
+    }
 
     if (s_frame_ready) {
         vSemaphoreDelete(s_frame_ready);
@@ -880,17 +882,27 @@ static void mode7_tick(lv_obj_t *canvas, uint32_t /*t_ms*/)
     float bpm = 120.0f;
     {
         StudioOneState s1{};
-        if (xQueuePeek(g_studio_one_queue, &s1, 0) == pdTRUE && s1.bpm > 0.0f) {
+        if (g_studio_one_queue && xQueuePeek(g_studio_one_queue, &s1, 0) == pdTRUE && s1.bpm > 0.0f) {
             bpm = s1.bpm;
         }
     }
 
     // --- Update c parameter (Julia only) ---
+    // Interpolate along a trajectory of known-beautiful Julia-set waypoints
+    // (all near the Mandelbrot boundary). Each segment lasts ~30 s at 20 Hz.
+    // Audio adds a subtle ±0.05 wobble so live music still has influence.
     if (!s_mandelbrot_mode.load(std::memory_order_relaxed)) {
-        float cr = (bass_e   - 0.5f) * 1.6f;
-        float ci = (treble_e - 0.5f) * 0.8f;
-        cr = fmaxf(-0.8f, fminf(0.8f, cr));
-        ci = fmaxf(-0.4f, fminf(0.4f, ci));
+        s_traj_pos += 1.0f / 600.0f;  // 600 ticks per waypoint ≈ 30 s at 20 Hz
+        float pos   = s_traj_pos - floorf(s_traj_pos / JULIA_TRAJ_COUNT) * JULIA_TRAJ_COUNT;
+        int   wi    = (int)pos % JULIA_TRAJ_COUNT;
+        int   wj    = (wi + 1) % JULIA_TRAJ_COUNT;
+        float alpha = pos - (int)pos;
+        // Audio modulates c via slow sinusoids — oscillates around the waypoint
+        // rather than drifting away. Small amplitude keeps it near the beautiful boundary.
+        float cr    = JULIA_TRAJ[wi][0] * (1.0f - alpha) + JULIA_TRAJ[wj][0] * alpha
+                      + bass_e   * 0.018f * sinf(s_traj_pos * 5.3f);
+        float ci    = JULIA_TRAJ[wi][1] * (1.0f - alpha) + JULIA_TRAJ[wj][1] * alpha
+                      + treble_e * 0.014f * cosf(s_traj_pos * 4.1f);
         s_c_real.store(cr, std::memory_order_relaxed);
         s_c_imag.store(ci, std::memory_order_relaxed);
     }
@@ -915,18 +927,28 @@ static void mode7_tick(lv_obj_t *canvas, uint32_t /*t_ms*/)
             s_zoom_cy_atomic.store(s_zoom_cy, std::memory_order_relaxed);
         }
     } else {
-        // Julia: loudness-integral creep + peak transient jump
+        // Julia: continuous slow drift + loudness creep + peak transient
+        s_zoom *= 1.0003f;  // ~60s from 5.0 to zoom 22
         s_zoom += s_loudness_integral;
-        s_loudness_integral = 0.0f;  // consume the integral
+        s_loudness_integral = 0.0f;
 
-        // Peak transient jump: peak_l or peak_r > -6 dBFS
         if (s_pkt.peak_l > -6.0f || s_pkt.peak_r > -6.0f) {
             s_zoom *= 1.05f;
+        }
+
+        // Auto-reset: jump to next c-region when fully zoomed in
+        if (s_zoom > 22.0f) {
+            s_zoom    = 5.0f;
+            s_traj_pos += 0.5f;
+            s_zoom_cx = 0.5f;
+            s_zoom_cy = 0.1f;
+            s_zoom_cx_atomic.store(0.5f, std::memory_order_relaxed);
+            s_zoom_cy_atomic.store(0.1f, std::memory_order_relaxed);
         }
     }
 
     // Clamp zoom
-    s_zoom = fminf(s_zoom, 8.0f);
+    s_zoom = fminf(s_zoom, 20.0f);
     s_zoom = fmaxf(s_zoom, 0.5f);
     s_zoom_atomic.store(s_zoom, std::memory_order_relaxed);
 
@@ -959,7 +981,7 @@ static void mode7_tick(lv_obj_t *canvas, uint32_t /*t_ms*/)
 
     // --- Phase offset (palette animation, BPM-driven) ---
     // At 30Hz (33ms ticks): phase_offset += bpm/60 * 0.033 * 2*PI
-    s_phase_offset += (bpm / 60.0f) * 0.033f * TWO_PI;
+    s_phase_offset += (bpm / 60.0f) * 0.033f * TWO_PI * 0.25f;  // 4× slower colour cycle
     if (s_phase_offset > TWO_PI) s_phase_offset -= TWO_PI;
 
     // --- Check if a new frame is ready from the render task ---
@@ -974,6 +996,10 @@ static void mode7_tick(lv_obj_t *canvas, uint32_t /*t_ms*/)
     s_julia_buf_back  = tmp;
 
     // --- Colour mapping: escape_buf → canvas pixels (4×4 block per pixel) ---
+    lv_draw_buf_t *db7 = lv_canvas_get_draw_buf(canvas);
+    if (!db7 || !db7->data) return;
+    lv_color32_t *buf7 = reinterpret_cast<lv_color32_t *>(db7->data);
+
     const VisualPalette *pal = visuals_get_palette();
 
     // Pre-compute saturation from spectral flatness
@@ -984,41 +1010,44 @@ static void mode7_tick(lv_obj_t *canvas, uint32_t /*t_ms*/)
 
     // bg_tint as fallback for in-set pixels (escape count == 0)
     lv_color_t bg = pal->bg_tint;
+    lv_color32_t bg32 = { .blue=bg.blue, .green=bg.green, .red=bg.red, .alpha=0xFF };
 
-    for (int py = 0; py < JULIA_H; py++) {
-        int canvas_y0 = py * JULIA_SCALE;
+    for (int jy = 0; jy < JULIA_H; jy++) {
+        int canvas_y0 = jy * JULIA_SCALE;
 
-        for (int px = 0; px < JULIA_W; px++) {
-            int canvas_x0 = px * JULIA_SCALE;
+        for (int jx = 0; jx < JULIA_W; jx++) {
+            int canvas_x0 = jx * JULIA_SCALE;
 
-            uint8_t esc = s_julia_buf_front[py * JULIA_W + px];
+            uint8_t esc = s_julia_buf_front[jy * JULIA_W + jx];
 
-            lv_color_t col;
+            lv_color32_t c32;
             if (esc == 0) {
-                // In-set pixel: use bg_tint
-                col = bg;
+                lv_color_t col = hsv_to_color(
+                    0.70f + s_phase_offset / TWO_PI * 0.12f,
+                    0.85f,
+                    0.10f + val_scale * 0.10f);
+                c32 = { .blue=col.blue, .green=col.green, .red=col.red, .alpha=0xFF };
             } else {
-                // Map escape count to hue with phase offset cycling
                 float t = ((float)esc + s_phase_offset / TWO_PI * JULIA_MAX_ITER)
                           / (float)JULIA_MAX_ITER;
-                t = t - floorf(t);  // wrap 0..1
-
-                float val = val_scale;
-                col = hsv_to_color(t, sat, val);
+                t = t - floorf(t);
+                lv_color_t col = hsv_to_color(t, sat, val_scale);
+                c32 = { .blue=col.blue, .green=col.green, .red=col.red, .alpha=0xFF };
             }
 
-            // Write 4×4 block to canvas
+            // Write 4×4 block direct to PSRAM — zero LVGL draw task allocation.
             for (int dy = 0; dy < JULIA_SCALE; dy++) {
                 int cy2 = canvas_y0 + dy;
                 if ((unsigned)cy2 >= CH) continue;
+                lv_color32_t *row = buf7 + cy2 * CW;
                 for (int dx = 0; dx < JULIA_SCALE; dx++) {
                     int cx2 = canvas_x0 + dx;
-                    if ((unsigned)cx2 >= CW) continue;
-                    lv_canvas_set_px(canvas, cx2, cy2, col, LV_OPA_COVER);
+                    if ((unsigned)cx2 < CW) row[cx2] = c32;
                 }
             }
         }
     }
+    lv_obj_invalidate(canvas);
 }
 
 // ── Julia touch ───────────────────────────────────────────────────────────────

@@ -48,7 +48,15 @@ static void settings_timer_cb(lv_timer_t *t)
     bool connected = wifi_is_connected();
     lv_obj_set_style_bg_color(d->wifi_dot,
         lv_color_hex(connected ? 0x3B82F6u : 0x707070u), 0);
-    lv_label_set_text(d->wifi_status, connected ? "Connected" : "Disconnected");
+    if (connected) {
+        lv_label_set_text(d->wifi_status, "Connected");
+    } else {
+        int reason = wifi_get_disconnect_reason();
+        char reason_buf[32];
+        if (reason) snprintf(reason_buf, sizeof(reason_buf), "DC reason=%d", reason);
+        else        snprintf(reason_buf, sizeof(reason_buf), "Disconnected");
+        lv_label_set_text(d->wifi_status, reason_buf);
+    }
     char ip_str[18];
     wifi_get_ip(ip_str, sizeof(ip_str));
     lv_label_set_text(d->wifi_ip, ip_str);

@@ -179,3 +179,43 @@ rm -rf managed_components/
 idf.py fullclean
 idf.py build
 ```
+
+---
+
+## Measurement Accuracy
+
+A detailed analysis of what each meter actually computes and how it compares to professional
+standards (BS.1770-4 / EBU R128, True Peak, etc.) is in:
+
+→ [`docs/measurement-accuracy.md`](measurement-accuracy.md)
+
+Short version: RMS and M/S are professional grade. Loudness (LUFS) is an approximation
+(no K-weighting, no gating). Spectrum is frame-relative, not calibrated to dBFS. Peak
+has a sender-side squaring bug (~6 dB off). Integrated loudness is broken (hardcoded constant).
+
+---
+
+## Screen Architecture (UI-Polish / Phase 5+)
+
+### Settings + DevCtrl merged into SYSTEM screen
+
+The two separate home-row entries "Settings" and "Device Ctrl" were merged into a single
+"SYSTEM" screen (`screens/system.cpp`). The merged screen contains cards for Network (WiFi
+status + RSSI + toggle), Audio In, Chip, Memory, and a full-width System overview line.
+
+Nav grid: Row 2 reduced from 3 columns to 2 columns:
+```
+Row 2: [SYSTEM col 0] ↔ [Gradient Test col 1]
+```
+
+### Spectrum — 6 unified modes
+
+The BOOT-button-based spectrum navigation was replaced with a single unified spectrum screen
+(`screens/spectrum.cpp`) containing 6 modes selectable via centered foot pills:
+Bars · Curve · LED · Waterfall · Octave · Spectro.
+
+The separate `meter_led.cpp` was removed. The LED mode disclaimer ("Relative display — not
+calibrated to dBFS") is shown in amber text below the LED visualization.
+
+Guide lines (−3/−6/−12 dB relative to frame peak) are available via the settings overlay.
+A LUFS momentary badge is always visible in the top-right corner of the spectrum screen.

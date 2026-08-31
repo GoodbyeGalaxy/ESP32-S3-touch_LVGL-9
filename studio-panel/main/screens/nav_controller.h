@@ -7,7 +7,7 @@
 // ---------------------------------------------------------------------------
 //
 // Screen grid:
-//   Row 0  AUDIO:    [Metering] ↔ [Spectrum]
+//   Row 0  AUDIO:    [Metering Hub] ↔ [Visuals]
 //   Row 1  CONTROL:  [Studio One] ↔ [USB MIDI] ↔ [Routing]
 //   Row 2  SYSTEM:   [Settings] ↔ [Dev Control]
 //

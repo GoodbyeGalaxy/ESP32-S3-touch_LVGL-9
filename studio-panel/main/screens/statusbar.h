@@ -7,7 +7,7 @@ void statusbar_init();
 // Call from each screen's create function before lv_screen_load.
 void statusbar_set_screen_name(const char *name);
 
-// IN: connected state. OUT: WiFi symbol green (connected) or gray (not connected). No IP shown.
+// IN: connected state + optional IP string. OUT: WiFi symbol green/gray; IP shown in center.
 void statusbar_update_wifi(bool connected, const char *ip_str = nullptr);
 
 // IN: time string e.g. "21:43". OUT: updates time label (shown once SNTP syncs).

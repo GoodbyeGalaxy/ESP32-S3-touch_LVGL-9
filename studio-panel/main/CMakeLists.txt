@@ -14,11 +14,19 @@ idf_component_register(
         "screens/home.cpp"
         "screens/statusbar.cpp"
         "screens/metering.cpp"
+        "screens/metering_hub.cpp"
+        "screens/meter_osc.cpp"
+        "screens/meter_phase.cpp"
+        "screens/meter_ms.cpp"
+        "screens/meter_tuner.cpp"
+        "screens/meter_gonio.cpp"
+        "screens/meter_vu.cpp"
         "screens/studio_one.cpp"
         "screens/usb_midi.cpp"
         "screens/routing.cpp"
-        "screens/dev_control.cpp"
-        "screens/settings.cpp"
+        "screens/system.cpp"
+        "screens/settings_overlay.cpp"
+        "screens/meter_stereo.cpp"
         "screens/spectrum.cpp"
         "screens/visuals.cpp"
         "screens/visuals_modes.cpp"
@@ -47,6 +55,5 @@ idf_component_register(
         esp_event
         nvs_flash
         esp_driver_gpio
-        esp_websocket_client
         json
 )
