@@ -175,11 +175,11 @@ static void bpm_timer_cb(lv_timer_t *t)
 
         // Update BPM label
         if (st->bpm > 1.0f) {
-            char buf[8];
-            snprintf(buf, sizeof(buf), "%d", (int)(st->bpm + 0.5f));
+            char buf[16];
+            snprintf(buf, sizeof(buf), "BPM  %d", (int)(st->bpm + 0.5f));
             lv_label_set_text(st->lbl_bpm, buf);
         } else {
-            lv_label_set_text(st->lbl_bpm, "---");
+            lv_label_set_text(st->lbl_bpm, "BPM  ---");
         }
 
         // Update subtitle: BPM unit + confidence + method tag
@@ -190,10 +190,10 @@ static void bpm_timer_cb(lv_timer_t *t)
         int  pct = (int)(st->confidence * 100.0f + 0.5f);
         if (pct > 100) pct = 100;
         if (st->bpm > 1.0f) {
-            snprintf(sub, sizeof(sub), "BPM   conf %d %%   lag %d fr   onset / autocorr",
+            snprintf(sub, sizeof(sub), "conf %d%%   lag %d fr   onset autocorr",
                      pct, lag);
         } else {
-            snprintf(sub, sizeof(sub), "BPM   collecting onset data...   %d / %d frames",
+            snprintf(sub, sizeof(sub), "collecting onset data...  %d / %d frames",
                      st->count, LAG_MAX + 8);
         }
         lv_label_set_text(st->lbl_sub, sub);
@@ -233,7 +233,7 @@ lv_obj_t *meter_bpm_screen_create()
     // ── Large BPM number ──────────────────────────────────────────────────────
     lv_obj_t *lbl_bpm = lv_label_create(scr);
     lv_obj_remove_style_all(lbl_bpm);
-    lv_label_set_text(lbl_bpm, "---");
+    lv_label_set_text(lbl_bpm, "BPM  ---");
     lv_obj_set_style_text_color(lbl_bpm, THEME_TEXT_PRIMARY, 0);
     lv_obj_set_style_text_font(lbl_bpm, &lv_font_montserrat_36, 0);
     lv_obj_set_pos(lbl_bpm, 0, THEME_CONTENT_Y + 28);
@@ -244,7 +244,7 @@ lv_obj_t *meter_bpm_screen_create()
     // ── Subtitle: unit + confidence + method ──────────────────────────────────
     lv_obj_t *lbl_sub = lv_label_create(scr);
     lv_obj_remove_style_all(lbl_sub);
-    lv_label_set_text(lbl_sub, "BPM   collecting onset data...");
+    lv_label_set_text(lbl_sub, "collecting onset data...");
     lv_obj_set_style_text_color(lbl_sub, THEME_TEXT_HINT, 0);
     lv_obj_set_style_text_font(lbl_sub, THEME_FONT_HINT, 0);
     lv_obj_set_pos(lbl_sub, 0, THEME_CONTENT_Y + 82);
@@ -255,7 +255,7 @@ lv_obj_t *meter_bpm_screen_create()
     // ── Accuracy note ─────────────────────────────────────────────────────────
     lv_obj_t *note = lv_label_create(scr);
     lv_obj_remove_style_all(note);
-    lv_label_set_text(note, "±2–4 BPM accuracy at 30 fps · best for steady 4/4 · 8 s warmup");
+    lv_label_set_text(note, "+/-2-4 BPM accuracy at 30 fps, best for steady 4/4, 8 s warmup");
     lv_obj_set_style_text_color(note, lv_color_hex(0x505050), 0);
     lv_obj_set_style_text_font(note, THEME_FONT_HINT, 0);
     lv_obj_set_pos(note, 0, THEME_CONTENT_Y + 104);
@@ -265,7 +265,7 @@ lv_obj_t *meter_bpm_screen_create()
     // ── Onset waveform label ──────────────────────────────────────────────────
     lv_obj_t *wf_lbl = lv_label_create(scr);
     lv_obj_remove_style_all(wf_lbl);
-    lv_label_set_text(wf_lbl, "spectral flux (onset)   ←  last 8 s");
+    lv_label_set_text(wf_lbl, "spectral flux (onset)  last 8 s  <");
     lv_obj_set_style_text_color(wf_lbl, lv_color_hex(0x404040), 0);
     lv_obj_set_style_text_font(wf_lbl, THEME_FONT_HINT, 0);
     lv_obj_set_pos(wf_lbl, 8, WF_Y - 18);
