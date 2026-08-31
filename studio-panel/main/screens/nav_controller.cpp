@@ -3,7 +3,8 @@
 // Grid layout:
 //   Row 0  AUDIO:    [Metering col 0] ↔ [Visuals col 1]
 //   Row 1  CONTROL:  [Studio One col 0] ↔ [USB MIDI col 1] ↔ [Routing col 2]
-//   Row 2  SYSTEM:   [Settings col 0] ↔ [Dev Control col 1]
+//   Row 2  SYSTEM:   [System col 0] ↔ [Gradient Test col 1]
+//   Row 3  TOOLS:    [BPM col 0] ↔ [On Air col 1]
 //
 // Spectrum is now a swipe-up sub-view within Metering (not a standalone screen).
 //
@@ -27,6 +28,8 @@
 #include "screens/routing.h"
 #include "screens/system.h"
 #include "screens/gradient_test.h"
+#include "screens/meter_bpm.h"
+#include "screens/on_air.h"
 #include "screens/home.h"
 
 // ---------------------------------------------------------------------------
@@ -40,7 +43,7 @@ struct RowDef {
     ScreenFactory  factories[3];   // max 3 cols per row
 };
 
-static constexpr int ROW_COUNT = 3;
+static constexpr int ROW_COUNT = 4;
 
 static const RowDef ROWS[ROW_COUNT] = {
     // Row 0: AUDIO  — Metering hub replaces direct metering screen
@@ -49,6 +52,8 @@ static const RowDef ROWS[ROW_COUNT] = {
     { 3, { studio_one_screen_create, usb_midi_screen_create, routing_screen_create } },
     // Row 2: SYSTEM
     { 2, { system_screen_create, gradient_test_screen_create, nullptr } },
+    // Row 3: TOOLS
+    { 2, { meter_bpm_screen_create, on_air_screen_create, nullptr } },
 };
 
 // ---------------------------------------------------------------------------

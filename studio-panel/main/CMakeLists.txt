@@ -25,6 +25,8 @@ idf_component_register(
         "screens/usb_midi.cpp"
         "screens/routing.cpp"
         "screens/system.cpp"
+        "screens/meter_bpm.cpp"
+        "screens/on_air.cpp"
         "screens/settings_overlay.cpp"
         "screens/meter_stereo.cpp"
         "screens/spectrum.cpp"

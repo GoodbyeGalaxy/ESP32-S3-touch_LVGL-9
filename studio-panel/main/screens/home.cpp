@@ -15,11 +15,11 @@ struct TileDef {
 
 static const TileDef TILES[6] = {
     { LV_SYMBOL_AUDIO,    "METERING",    "Levels / Osc / Phase / M-S", {0, 0} },
-    { LV_SYMBOL_PLAY,     "STUDIO ONE",  "DAW Control",        {1, 0} },
-    { LV_SYMBOL_SHUFFLE,  "USB MIDI",    "CC / Nord Lead 2X",  {1, 1} },
-    { LV_SYMBOL_IMAGE,    "VISUALS",     "Visual Modes",       {0, 1} },
-    { LV_SYMBOL_SETTINGS, "DEVICE CTRL", "JSON Profiles",      {2, 1} },
-    { LV_SYMBOL_SETTINGS, "SETTINGS",    "Config / OTA",       {2, 0} },
+    { LV_SYMBOL_PLAY,     "STUDIO ONE",  "DAW Control",                {1, 0} },
+    { LV_SYMBOL_SHUFFLE,  "USB MIDI",    "CC / Nord Lead 2X",          {1, 1} },
+    { LV_SYMBOL_IMAGE,    "VISUALS",     "Visual Modes",               {0, 1} },
+    { LV_SYMBOL_SETTINGS, "SYSTEM",      "WiFi / Chip / Heap",         {2, 0} },
+    { LV_SYMBOL_AUDIO,    "TOOLS",       "BPM / On Air",               {3, 0} },
 };
 
 static void on_tile_clicked(lv_event_t *e)
